@@ -1,13 +1,14 @@
 {
-  "name": "discord-management-bot",
+  "name": "discord-openrouter-chatbot",
   "version": "1.0.0",
-  "description": "Full-featured Discord server management and moderation bot",
+  "description": "Discord chatbot powered by OpenRouter-compatible models",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
     "dev": "node --watch bot.js"
   },
   "dependencies": {
+    "@openrouter/sdk": "^0.12.25",
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.5"
   },
