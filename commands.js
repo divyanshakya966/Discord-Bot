@@ -41,9 +41,16 @@ const slashCommands = [
         .setDescription('Switch to a specific model')
         .addStringOption(option =>
           option
+            .setName('model')
+            .setDescription('Choose a model from the list')
+            .setRequired(false)
+            .addChoices(...modelChoices)
+        )
+        .addStringOption(option =>
+          option
             .setName('model_id')
-            .setDescription('Model ID (e.g., openai/gpt-4-turbo)')
-            .setRequired(true)
+            .setDescription('Or enter a custom model ID manually (e.g., openai/gpt-4-turbo)')
+            .setRequired(false)
         )
     ),
   new SlashCommandBuilder()

@@ -766,7 +766,9 @@ async function handleSlashCommand(interaction) {
 
   if (command === 'model') {
     const subcommand = interaction.options.getSubcommand();
-    const modelId = interaction.options.getString('model_id') || '';
+    const selectedModel = interaction.options.getString('model') || '';
+    const manualModelId = interaction.options.getString('model_id') || '';
+    const modelId = selectedModel || manualModelId;
     prompt = [subcommand, modelId].filter(Boolean).join(' ');
     await handleCommand(messageProxy, command, prompt);
   } else if (command === 'personality') {
