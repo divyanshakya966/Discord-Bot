@@ -717,7 +717,7 @@ async function handleSlashCommand(interaction) {
   // Acknowledge immediately so Discord never shows "The application did not respond".
   // We keep the reply public so the actual command result replaces this deferred state.
   if (!interaction.deferred && !interaction.replied) {
-    await interaction.deferReply({ ephemeral: false });
+    await interaction.deferReply();
   }
 
   if (command === 'ask') {
@@ -782,6 +782,8 @@ async function handleSlashCommand(interaction) {
   } else if (command === 'research') {
     prompt = interaction.options.getString('query', true);
     await handleCommand(messageProxy, command, prompt);
+  } else if (command === 'help' || command === 'ping' || command === 'clear') {
+    await handleCommand(messageProxy, command, '');
   }
 }
 
