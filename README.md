@@ -1,4 +1,4 @@
-# Discord OpenRouter Chatbot - Premium Edition
+# Discord AI Chatbot
 
 A lightweight Discord chatbot built with Discord.js and the official OpenRouter SDK, now featuring advanced AI capabilities.
 
@@ -18,7 +18,7 @@ A lightweight Discord chatbot built with Discord.js and the official OpenRouter 
 
 ## Premium Features
 
-### 🔄 Multi-Model Switcher
+### Multi-Model Switcher
 Switch between different AI models with a single command. Each session/guild can have its own preferred model.
 
 - `!model list` - View available models
@@ -32,7 +32,7 @@ Switch between different AI models with a single command. Each session/guild can
 - OpenAI GPT-4 Turbo
 - Anthropic Claude 3.5 Sonnet
 
-### 🎭 Custom AI Personalities
+### Custom AI Personalities
 Select different AI personalities for different conversational styles. Each personality has a specialized system prompt.
 
 - `!personality list` - View available personalities
@@ -46,12 +46,12 @@ Select different AI personalities for different conversational styles. Each pers
 - **Creative Writer** - Imaginative and engaging writing helper
 - **Educational Tutor** - Patient educator for learning
 
-### 💻 Code Analysis Mode
+### Code Analysis Mode
 Get expert analysis on code snippets with bug detection, optimization suggestions, and detailed explanations.
 
 - `!code <code_snippet>` - Analyze code with expert mode
 
-### 🔍 Research Mode
+### Research Mode
 Search the web and get comprehensive information on any topic with sources.
 
 - `!research <query>` - Research a topic with web search
@@ -73,7 +73,7 @@ Search the web and get comprehensive information on any topic with sources.
 - `!personality current` - Show current personality
 
 ### Specialized Modes
-- `!code <code> - Analyze code with expert mode
+- `!code <code>` - Analyze code with expert mode
 - `!research <query>` - Search and research a topic
 
 You can also mention the bot and type your prompt.
