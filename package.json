@@ -1,11 +1,12 @@
 {
   "name": "discord-openrouter-chatbot",
   "version": "1.0.0",
-  "description": "Discord chatbot powered by OpenRouter-compatible models",
+  "description": "Discord chatbot powered by OpenRouter-compatible models with slash-command UX",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "dev": "node --watch bot.js"
+    "dev": "node --watch bot.js",
+    "deploy-commands": "node deploy-commands.js"
   },
   "dependencies": {
     "@openrouter/sdk": "^0.12.25",

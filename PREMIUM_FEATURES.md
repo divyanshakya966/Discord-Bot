@@ -201,9 +201,10 @@ copy .env.example .env
 Edit `.env`:
 ```
 DISCORD_TOKEN=your_token
+DISCORD_CLIENT_ID=your_application_id
+DISCORD_GUILD_ID=your_test_server_id
 OPENROUTER_API_KEY=your_key
 OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free
-PREFIX=!
 ```
 
 Run:
@@ -240,28 +241,28 @@ All files are automatically created and updated.
 ### Combining Features
 ```
 # Set up a specific personality and model, then use code analysis
-!personality set code-analyzer
-!model set claude-3.5-sonnet
-!code <your_code>
+/personality set name:code-analyzer
+/model set model_id:claude-3.5-sonnet
+/code code:<your_code>
 ```
 
 ### Using Research for Different Topics
 ```
-!research machine learning trends
-!research historical events
-!research scientific discoveries
+/research query:machine learning trends
+/research query:historical events
+/research query:scientific discoveries
 ```
 
 ### Switching Between Personalities
 ```
 # For creative work
-!personality set creative
+/personality set name:creative
 
 # For learning
-!personality set tutor
+/personality set name:tutor
 
 # Back to general chat
-!personality set standard
+/personality set name:standard
 ```
 
 ---
@@ -270,6 +271,7 @@ All files are automatically created and updated.
 
 ### Required
 - `DISCORD_TOKEN` - Discord bot token
+- `DISCORD_CLIENT_ID` - Discord application/client ID
 - `OPENROUTER_API_KEY` - OpenRouter API key
 - `OPENROUTER_MODEL` - Default model ID
 
@@ -277,7 +279,7 @@ All files are automatically created and updated.
 - `SERPER_API_KEY` - Enable research mode (get free tier at serper.dev)
 
 ### Configuration
-- `PREFIX` - Command prefix (default: `!`)
+- `DISCORD_GUILD_ID` - Optional test server ID for instant slash command updates
 - `MAX_HISTORY` - Conversation history length (default: `8`)
 - `MAX_TOKENS` - Max response tokens (default: `500`)
 - `TEMPERATURE` - AI creativity level (default: `0.7`)
@@ -287,7 +289,7 @@ All files are automatically created and updated.
 ## Troubleshooting
 
 ### Model Not Switching
-- Verify model ID matches available list: `!model list`
+- Verify model ID matches available list: `/model list`
 - Check OPENROUTER_API_KEY is valid
 
 ### Research Mode Not Working
@@ -296,11 +298,11 @@ All files are automatically created and updated.
 - Check rate limit (100/month on free tier)
 
 ### Personality Not Applied
-- Verify personality name from: `!personality list`
+- Verify personality name from: `/personality list`
 - Ensure spelling matches exactly
 
 ### Code Analysis Not Detailed
-- Try the dedicated `!code` command
+- Try the dedicated `/code` command
 - Use the "code-analyzer" personality
 
 ---

@@ -2,6 +2,7 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Partials, Events } = require('discord.js');
 const fs = require('fs').promises;
 const path = require('path');
+const { AVAILABLE_MODELS, DEFAULT_PERSONALITIES } = require('./bot-data');
 const DATA_DIR = path.join(__dirname, 'data');
 
 
@@ -10,7 +11,7 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const DEFAULT_OPENROUTER_MODEL = 'gryphe/mythomax-l2-13b';
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || DEFAULT_OPENROUTER_MODEL;
 const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
-const PREFIX = process.env.PREFIX || '!';
+const COMMAND_PREFIX = '/';
 const SYSTEM_PROMPT =
   process.env.SYSTEM_PROMPT ||
   'You are a helpful and concise Discord assistant. Keep answers friendly and practical.';
@@ -21,42 +22,6 @@ const TOP_P = Number(process.env.TOP_P || 0.95);
 const FREQUENCY_PENALTY = Number(process.env.FREQUENCY_PENALTY || 0.5);
 const PRESENCE_PENALTY = Number(process.env.PRESENCE_PENALTY || 0.3);
 const SERPER_API_KEY = process.env.SERPER_API_KEY || null;
-
-// Available models for switching
-const AVAILABLE_MODELS = [
-  { id: 'gryphe/mythomax-l2-13b', name: 'MythoMax L2 13B', maxTokens: 500 },
-  { id: 'meta-llama/llama-3.1-70b-instruct', name: 'Llama 3.1 70B', maxTokens: 500 },
-  { id: 'mistralai/mistral-large', name: 'Mistral Large', maxTokens: 500 },
-  { id: 'openai/gpt-4-turbo', name: 'GPT-4 Turbo', maxTokens: 500 },
-];
-
-// Preset AI Personalities
-const DEFAULT_PERSONALITIES = {
-  'standard': {
-    name: 'Standard Assistant',
-    prompt: 'You are a helpful and concise Discord assistant. Keep answers friendly and practical.'
-  },
-  'code-analyzer': {
-    name: 'Code Analyzer',
-    prompt: 'You are an expert code analyzer and programmer. Analyze code thoroughly, identify bugs, suggest optimizations, and explain complex logic in detail. Always provide code examples when helpful.'
-  },
-  'researcher': {
-    name: 'Research Assistant',
-    prompt: 'You are a research assistant with access to current information. Provide well-sourced, accurate, and detailed information. Include relevant facts and citations when available.'
-  },
-  'creative': {
-    name: 'Creative Writer',
-    prompt: 'You are a creative writing assistant. Help with stories, ideas, worldbuilding, and creative projects. Be imaginative and engaging.'
-  },
-  'tutor': {
-    name: 'Educational Tutor',
-    prompt: 'You are an experienced tutor. Explain concepts clearly, use analogies, break down complex topics into manageable parts, and encourage learning.'
-  },
-  'girl-text': {
-    name: 'Girl Text',
-    prompt: 'Reply in ONE LINE ONLY. Friendly and engaging girl texting. Just emojis + few words required for user\'s message\'s reply. Examples: hey 😊, lol stoppp 😏, hehe nice 💕, omg yess ❤️. Make the replies more genuine and humanly. Replies based on user\'s message. Make user feel valued and understood with natural, witty expressions in the chat.'
-  }
-};
 
 if (!DISCORD_TOKEN) {
   console.error('Missing DISCORD_TOKEN in environment variables.');
@@ -139,7 +104,7 @@ async function saveModelPreferences(preferences) {
 
 function getSessionModelKey(message) {
   if (message.guildId) return `guild:${message.guildId}`;
-  return `user:${message.author.id}`;
+  return `user:${message.author?.id || message.user?.id}`;
 }
 
 async function getSessionModel(message) {
@@ -214,7 +179,7 @@ async function savePersonalityPreferences(preferences) {
 
 function getGuildPersonalityKey(message) {
   if (message.guildId) return `guild:${message.guildId}`;
-  return `user:${message.author.id}`;
+  return `user:${message.author?.id || message.user?.id}`;
 }
 
 async function getSessionPersonality(message) {
@@ -306,16 +271,15 @@ async function getOpenRouterClient() {
 
 function getSessionKey(message) {
   if (message.guildId) return `guild:${message.guildId}:channel:${message.channelId}`;
-  return `dm:${message.author.id}`;
+  return `dm:${message.author?.id || message.user?.id}`;
 }
 
 function shouldRespond(message) {
   if (message.author.bot) return false;
   if (message.channel.isDMBased()) return true;
 
-  const isMention = message.mentions.has(client.user);
-  const isCommand = message.content.startsWith(PREFIX);
-  return isMention || isCommand;
+  const isMention = client.user && message.mentions.has(client.user);
+  return isMention;
 }
 
 function stripBotMention(content) {
@@ -326,21 +290,23 @@ function stripBotMention(content) {
 }
 
 function parseUserPrompt(message) {
-  const trimmed = message.content.trim();
-
-  if (trimmed.startsWith(PREFIX)) {
-    const withoutPrefix = trimmed.slice(PREFIX.length).trim();
-    const [command, ...rest] = withoutPrefix.split(/\s+/);
-    return {
-      mode: 'command',
-      command: (command || '').toLowerCase(),
-      prompt: rest.join(' ').trim(),
-    };
-  }
-
   return {
     mode: 'chat',
-    prompt: stripBotMention(trimmed),
+    prompt: stripBotMention(message.content.trim()),
+  };
+}
+
+function createSingleReplyProxy(interaction) {
+  const safeChannel = interaction.channel || { sendTyping: async () => {} };
+
+  return {
+    guildId: interaction.guildId,
+    channelId: interaction.channelId,
+    author: interaction.user,
+    channel: safeChannel,
+    reply: async content => {
+      return interaction.editReply(content);
+    },
   };
 }
 
@@ -439,6 +405,71 @@ async function queryOpenRouter(messages, modelId) {
   return response.trim() || 'No response returned by model.';
 }
 
+// Streaming version that sends chunks to Discord in real-time
+async function queryOpenRouterStreaming(messages, modelId, onChunk) {
+  const openrouter = await getOpenRouterClient();
+  const model = modelId || OPENROUTER_MODEL;
+
+  const richChatRequest = {
+    model,
+    messages,
+    maxTokens: MAX_TOKENS,
+    temperature: TEMPERATURE,
+    topP: TOP_P,
+    frequencyPenalty: FREQUENCY_PENALTY,
+    presencePenalty: PRESENCE_PENALTY,
+    stream: true,
+  };
+
+  const basicChatRequest = {
+    model,
+    messages,
+    maxTokens: MAX_TOKENS,
+    temperature: TEMPERATURE,
+    stream: true,
+  };
+
+  let stream;
+  try {
+    stream = await openrouter.chat.send({ chatRequest: richChatRequest });
+  } catch (error) {
+    const reason = extractProviderErrorMessage(error);
+    if (isLikelyParameterCompatibilityError(reason)) {
+      console.warn(`Retrying ${model} with reduced params due to compatibility error: ${reason}`);
+      stream = await openrouter.chat.send({ chatRequest: basicChatRequest });
+    } else {
+      throw new Error(toUserFacingProviderError(error, model));
+    }
+  }
+
+  let fullResponse = '';
+  let reasoningTokens;
+
+  try {
+    for await (const chunk of stream) {
+      const content = chunk.choices?.[0]?.delta?.content;
+      if (content) {
+        fullResponse += content;
+        if (onChunk) {
+          await onChunk(content);
+        }
+      }
+
+      if (chunk.usage?.reasoningTokens !== undefined && chunk.usage.reasoningTokens !== null) {
+        reasoningTokens = chunk.usage.reasoningTokens;
+      }
+    }
+  } catch (error) {
+    throw new Error(toUserFacingProviderError(error, model));
+  }
+
+  if (reasoningTokens !== undefined) {
+    console.log(`Reasoning tokens: ${reasoningTokens}`);
+  }
+
+  return fullResponse.trim() || 'No response returned by model.';
+}
+
 async function buildModelMessages(message, history, userPrompt) {
   const personality = await getSessionPersonality(message);
   const recentHistory = history.slice(-MAX_HISTORY);
@@ -474,7 +505,7 @@ async function handleChatRequest(message, userPrompt) {
   }
 
   if (!userPrompt) {
-    await message.reply(`Send a message or use ${PREFIX}ask <question>.`);
+    await message.reply(`Send a message or use ${COMMAND_PREFIX}ask question:<question>.`);
     return;
   }
 
@@ -488,10 +519,7 @@ async function handleChatRequest(message, userPrompt) {
   const assistantReply = await queryOpenRouter(modelMessages, sessionModel);
   await appendAndSaveConversation(sessionKey, history, userPrompt, assistantReply);
 
-  const chunks = assistantReply.match(/[\s\S]{1,1800}/g) || [];
-  for (const chunk of chunks) {
-    await message.reply(chunk);
-  }
+  await message.reply(assistantReply);
 }
 
 async function handleCommand(message, command, prompt) {
@@ -499,22 +527,22 @@ async function handleCommand(message, command, prompt) {
     await message.reply(
       [
         '**Chatbot Commands**',
-        `${PREFIX}help - Show this message`,
-        `${PREFIX}ping - Check bot health`,
-        `${PREFIX}clear - Clear chat memory for this channel/DM`,
-        `${PREFIX}ask <question> - Ask the AI`,
+        `${COMMAND_PREFIX}help - Show this message`,
+        `${COMMAND_PREFIX}ping - Check bot health`,
+        `${COMMAND_PREFIX}clear - Clear chat memory for this channel/DM`,
+        `${COMMAND_PREFIX}ask question:<question> - Ask the AI`,
         '',
         '**Model & Personality Commands**',
-        `${PREFIX}model list - List available AI models`,
-        `${PREFIX}model set <id> - Switch to a different model`,
-        `${PREFIX}model current - Show current model`,
-        `${PREFIX}personality list - List available personalities`,
-        `${PREFIX}personality set <name> - Switch personality`,
-        `${PREFIX}personality current - Show current personality`,
+        `${COMMAND_PREFIX}model list - List available AI models`,
+        `${COMMAND_PREFIX}model set model_id:<id> - Switch to a different model`,
+        `${COMMAND_PREFIX}model current - Show current model`,
+        `${COMMAND_PREFIX}personality list - List available personalities`,
+        `${COMMAND_PREFIX}personality set name:<name> - Switch personality`,
+        `${COMMAND_PREFIX}personality current - Show current personality`,
         '',
         '**Specialized Modes**',
-        `${PREFIX}code <code> - Analyze code with expert mode`,
-        `${PREFIX}research <query> - Search and research a topic`,
+        `${COMMAND_PREFIX}code code:<code> - Analyze code with expert mode`,
+        `${COMMAND_PREFIX}research query:<query> - Search and research a topic`,
         '',
         'You can also mention the bot with a prompt, or DM the bot directly.',
       ].join('\n')
@@ -554,7 +582,7 @@ async function handleCommand(message, command, prompt) {
 
     if (subcommand === 'set') {
       if (!args) {
-        await message.reply('Usage: `!model set <model_id>`');
+        await message.reply(`Usage: \`${COMMAND_PREFIX}model set model_id:<id>\``);
         return;
       }
       try {
@@ -573,7 +601,7 @@ async function handleCommand(message, command, prompt) {
       return;
     }
 
-    await message.reply(`Usage: \`${PREFIX}model <list|set|current>\``);
+    await message.reply(`Usage: \`${COMMAND_PREFIX}model <list|set|current>\``);
     return;
   }
 
@@ -593,7 +621,7 @@ async function handleCommand(message, command, prompt) {
 
     if (subcommand === 'set') {
       if (!args) {
-        await message.reply('Usage: `!personality set <name>`');
+        await message.reply(`Usage: \`${COMMAND_PREFIX}personality set name:<name>\``);
         return;
       }
       try {
@@ -611,14 +639,14 @@ async function handleCommand(message, command, prompt) {
       return;
     }
 
-    await message.reply(`Usage: \`${PREFIX}personality <list|set|current>\``);
+    await message.reply(`Usage: \`${COMMAND_PREFIX}personality <list|set|current>\``);
     return;
   }
 
   // ============ Code Analysis Mode ============
   if (command === 'code') {
     if (!prompt) {
-      await message.reply('Usage: `!code <code_snippet or language>`');
+      await message.reply(`Usage: \`${COMMAND_PREFIX}code code:<code>\``);
       return;
     }
 
@@ -640,17 +668,14 @@ async function handleCommand(message, command, prompt) {
     const analysis = await queryOpenRouter(messages, sessionModel);
     await appendAndSaveConversation(sessionKey, history, `Code Analysis: ${prompt.slice(0, 50)}...`, analysis);
 
-    const chunks = analysis.match(/[\s\S]{1,1800}/g) || [];
-    for (const chunk of chunks) {
-      await message.reply(chunk);
-    }
+    await message.reply(analysis);
     return;
   }
 
   // ============ Research Mode ============
   if (command === 'research') {
     if (!prompt) {
-      await message.reply('Usage: `!research <query>`');
+      await message.reply(`Usage: \`${COMMAND_PREFIX}research query:<query>\``);
       return;
     }
 
@@ -673,10 +698,7 @@ async function handleCommand(message, command, prompt) {
     const research = await queryOpenRouter(messages, sessionModel);
     await appendAndSaveConversation(sessionKey, history, `Research: ${prompt}`, research);
 
-    const chunks = research.match(/[\s\S]{1,1800}/g) || [];
-    for (const chunk of chunks) {
-      await message.reply(chunk);
-    }
+    await message.reply(research);
     return;
   }
 
@@ -685,7 +707,80 @@ async function handleCommand(message, command, prompt) {
     return;
   }
 
-  await message.reply(`Unknown command: ${command}. Try ${PREFIX}help.`);
+  await message.reply(`Unknown command: ${command}. Try ${COMMAND_PREFIX}help.`);
+}
+
+async function handleSlashCommand(interaction) {
+  const command = interaction.commandName;
+  let prompt = '';
+
+  // Acknowledge immediately so Discord never shows "The application did not respond".
+  // We keep the reply public so the actual command result replaces this deferred state.
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ ephemeral: false });
+  }
+
+  if (command === 'ask') {
+    prompt = interaction.options.getString('question', true);
+    
+    // For /ask, build the full response and send one final edit only.
+    try {
+      if (!OPENROUTER_API_KEY) {
+        await interaction.editReply(
+          'OpenRouter is not configured yet. Add OPENROUTER_API_KEY to your .env, then restart the bot.'
+        );
+        return;
+      }
+      
+      if (!prompt) {
+        await interaction.editReply(`Send a question with /ask question:<question>.`);
+        return;
+      }
+
+      const sessionKey = getSessionKey(interaction);
+      const history = await loadConversationHistory(sessionKey);
+      const sessionModel = await getSessionModel(interaction);
+      const modelMessages = await buildModelMessages(interaction, history, prompt);
+
+      const fullResponse = await queryOpenRouter(modelMessages, sessionModel);
+      await interaction.editReply({ content: fullResponse, allowedMentions: { parse: [] } });
+
+      // Save conversation to history
+      await appendAndSaveConversation(sessionKey, history, prompt, fullResponse || 'No response.');
+    } catch (error) {
+      console.error('Failed to stream /ask response:', error);
+      const errorText = error?.message || 'Something went wrong while contacting the AI provider. Please try again.';
+      const safeErrorText = errorText.slice(0, 300);
+      
+      if (interaction.replied) {
+        await interaction.editReply(`AI provider error: ${safeErrorText}`).catch(() => {});
+      } else {
+        await interaction.reply(`AI provider error: ${safeErrorText}`).catch(() => {});
+      }
+    }
+    return;
+  }
+
+  // For non-/ask commands, use the same single-reply flow so each command stays clean.
+  const messageProxy = createSingleReplyProxy(interaction);
+
+  if (command === 'model') {
+    const subcommand = interaction.options.getSubcommand();
+    const modelId = interaction.options.getString('model_id') || '';
+    prompt = [subcommand, modelId].filter(Boolean).join(' ');
+    await handleCommand(messageProxy, command, prompt);
+  } else if (command === 'personality') {
+    const subcommand = interaction.options.getSubcommand();
+    const personalityName = interaction.options.getString('name') || '';
+    prompt = [subcommand, personalityName].filter(Boolean).join(' ');
+    await handleCommand(messageProxy, command, prompt);
+  } else if (command === 'code') {
+    prompt = interaction.options.getString('code', true);
+    await handleCommand(messageProxy, command, prompt);
+  } else if (command === 'research') {
+    prompt = interaction.options.getString('query', true);
+    await handleCommand(messageProxy, command, prompt);
+  }
 }
 
 client.once(Events.ClientReady, () => {
@@ -695,20 +790,55 @@ client.once(Events.ClientReady, () => {
 
 client.on(Events.MessageCreate, async message => {
   try {
+    // Ignore bot messages
+    if (message.author?.bot) return;
+
+    // If this message is a reply to one of the bot's messages, treat it as a direct follow-up
+    // so users can continue the conversation by replying to the bot's message in-channel.
+    if (message.reference && message.reference.messageId) {
+      try {
+        const referenced = await message.channel.messages.fetch(message.reference.messageId);
+        if (referenced && referenced.author && referenced.author.id === client.user.id) {
+          // Use the raw message content as the prompt for replies (no mention required)
+          const prompt = message.content?.trim();
+          await handleChatRequest(message, prompt);
+          return;
+        }
+      } catch (err) {
+        // If fetching the referenced message fails, fall back to normal behavior
+        console.warn('Failed to fetch referenced message:', err?.message || err);
+      }
+    }
+
+    // Otherwise, respond only when explicitly mentioned or in DMs (existing behavior)
     if (!shouldRespond(message)) return;
 
     const parsed = parseUserPrompt(message);
-    if (parsed.mode === 'command') {
-      await handleCommand(message, parsed.command, parsed.prompt);
-      return;
-    }
-
     await handleChatRequest(message, parsed.prompt);
   } catch (error) {
     console.error('Failed to process message:', error);
     const errorText = error?.message || 'Something went wrong while contacting the AI provider. Please try again.';
     const safeErrorText = errorText.slice(0, 300);
     await message.reply(`AI provider error: ${safeErrorText}`).catch(() => {});
+  }
+});
+
+client.on(Events.InteractionCreate, async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+
+  try {
+    await handleSlashCommand(interaction);
+  } catch (error) {
+    console.error('Failed to process slash command:', error);
+    const errorText = error?.message || 'Something went wrong while contacting the AI provider. Please try again.';
+    const safeErrorText = errorText.slice(0, 300);
+
+    if (interaction.deferred || interaction.replied) {
+      await interaction.followUp(`AI provider error: ${safeErrorText}`).catch(() => {});
+      return;
+    }
+
+    await interaction.reply(`AI provider error: ${safeErrorText}`).catch(() => {});
   }
 });
 

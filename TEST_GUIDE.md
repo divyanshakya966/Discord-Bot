@@ -2,7 +2,7 @@
 
 ## Pre-Test Checklist
 
-- [ ] Updated `.env` with DISCORD_TOKEN, OPENROUTER_API_KEY, OPENROUTER_MODEL
+- [ ] Updated `.env` with DISCORD_TOKEN, DISCORD_CLIENT_ID, OPENROUTER_API_KEY, OPENROUTER_MODEL
 - [ ] (Optional) Added SERPER_API_KEY for research mode
 - [ ] Ran `npm install` to ensure all dependencies
 - [ ] Started bot with `npm start`
@@ -10,10 +10,22 @@
 
 ---
 
+## Before Testing Slash Commands
+
+Run the registration script once after changing commands:
+
+```bash
+npm run deploy-commands
+```
+
+Global slash commands can take a bit longer to show up in Discord, so give them some time after deploying.
+
+---
+
 ## Test 1: Help Command Updated ✅
 
 ```
-User: !help
+User: /help
 Expected: Shows all new commands (model, personality, code, research)
 ```
 
@@ -22,17 +34,17 @@ Expected: Shows all new commands (model, personality, code, research)
 ## Test 2: Multi-Model Switcher 🔄
 
 ```
-User: !model list
+User: /model list
 Expected: Shows 5 available models with IDs
 
-User: !model set meta-llama/llama-3.1-70b-instruct
+User: /model set model_id:meta-llama/llama-3.1-70b-instruct
 Expected: ✅ Switched to **Llama 3.1 70B**
 
-User: !model current
+User: /model current
 Expected: 📊 Current Model: **Llama 3.1 70B**
 
-User: !ask What is machine learning?
-Expected: Response from Llama model (should show different style than default)
+User: /ask question:What is machine learning?
+Expected: Response from Llama model (single final reply)
 ```
 
 ---
@@ -40,16 +52,16 @@ Expected: Response from Llama model (should show different style than default)
 ## Test 3: Custom Personalities 🎭
 
 ```
-User: !personality list
+User: /personality list
 Expected: Shows all 5 personalities (Standard, Code Analyzer, Researcher, Creative, Tutor)
 
-User: !personality set tutor
+User: /personality set name:tutor
 Expected: ✅ Switched to **Educational Tutor**
 
-User: !personality current
+User: /personality current
 Expected: 🎭 Current Personality: **Educational Tutor**
 
-User: !ask Explain quantum computing
+User: /ask question:Explain quantum computing
 Expected: Explanation in educational, step-by-step style
 ```
 
@@ -58,17 +70,17 @@ Expected: Explanation in educational, step-by-step style
 ## Test 4: Code Analysis Mode 💻
 
 ```
-User: !code
+User: /code code:
 def fibonacci(n):
     if n <= 1:
         return n
     return fibonacci(n-1) + fibonacci(n-2)
 
-Expected: 
+Expected:
 - Identifies the algorithm
 - Notes performance issues (exponential time)
 - Suggests optimization (memoization)
-- Provides alternative implementations
+- Sends one final message instead of multiple edits
 ```
 
 ---
@@ -77,17 +89,18 @@ Expected:
 
 ### Without SERPER_API_KEY:
 ```
-User: !research AI trends 2025
+User: /research query:AI trends 2025
 Expected: Web search is not configured. Add SERPER_API_KEY to your .env file.
 ```
 
 ### With SERPER_API_KEY:
 ```
-User: !research latest AI breakthroughs
-Expected: 
+User: /research query:latest AI breakthroughs
+Expected:
 - Recent web search results shown
 - AI provides analysis incorporating current information
 - Sources are cited
+- Sends one final message instead of multiple edits
 ```
 
 ---
@@ -96,15 +109,15 @@ Expected:
 
 ### Code Analysis with Different Personality:
 ```
-User: !personality set code-analyzer
-User: !code print("Hello")
+User: /personality set name:code-analyzer
+User: /code code:print("Hello")
 Expected: Detailed analysis of the code snippet
 ```
 
 ### Research with Different Personality:
 ```
-User: !personality set researcher
-User: !research climate change
+User: /personality set name:researcher
+User: /research query:climate change
 Expected: Well-sourced, detailed research response
 ```
 
@@ -113,9 +126,9 @@ Expected: Well-sourced, detailed research response
 ## Test 7: Model + Personality Combinations
 
 ```
-User: !model set anthropic/claude-3.5-sonnet
-User: !personality set creative
-User: !ask Write a short poem about coding
+User: /model set model_id:anthropic/claude-3.5-sonnet
+User: /personality set name:creative
+User: /ask question:Write a short poem about coding
 Expected: Creative poem from Claude model
 ```
 
@@ -124,15 +137,15 @@ Expected: Creative poem from Claude model
 ## Test 8: Conversation Memory
 
 ```
-User: !personality set tutor
-User: !ask What is a variable?
+User: /personality set name:tutor
+User: /ask question:What is a variable?
 [Bot explains]
 
-User: !ask Can you give me an example?
+User: /ask question:Can you give me an example?
 Expected: Bot remembers context, provides example (not just generic response)
 
-User: !clear
-User: !ask Give me an example
+User: /clear
+User: /ask question:Give me an example
 Expected: Bot doesn't remember previous context
 ```
 
@@ -142,19 +155,19 @@ Expected: Bot doesn't remember previous context
 
 ### In DM with bot:
 ```
-!model set claude-3.5-sonnet
+/model set model_id:claude-3.5-sonnet
 [Use that model]
 ```
 
 ### In guild channel 1:
 ```
-!model set gemma
+/model set model_id:gemma
 [Use Gemma]
 ```
 
 ### Back in DM:
 ```
-!ask Hello
+/ask question:Hello
 Expected: Should still use Claude (DM preferences are separate)
 ```
 
@@ -164,20 +177,20 @@ Expected: Should still use Claude (DM preferences are separate)
 
 ### Invalid Model:
 ```
-User: !model set invalid-model
+User: /model set model_id:invalid-model
 Expected: ❌ Model not found: invalid-model
 ```
 
 ### Invalid Personality:
 ```
-User: !personality set nonexistent
+User: /personality set name:nonexistent
 Expected: ❌ Personality not found: nonexistent
 ```
 
 ### Missing Code Snippet:
 ```
-User: !code
-Expected: Usage: `!code <code_snippet or language>`
+User: /code
+Expected: Usage: `/code code:<code>`
 ```
 
 ---
@@ -188,15 +201,16 @@ Expected: Usage: `!code <code_snippet or language>`
 - [ ] Check bot has MESSAGE_CONTENT intent enabled
 - [ ] Verify DISCORD_TOKEN is correct
 - [ ] Check bot is in the server
-- [ ] Verify PREFIX in .env (default is `!`)
+- [ ] Verify DISCORD_CLIENT_ID is set in `.env`
+- [ ] Run `npm run deploy-commands`
 
 ### Issue: Model switching doesn't work
-- [ ] Verify model ID from `!model list`
+- [ ] Verify model ID from `/model list`
 - [ ] Check OPENROUTER_API_KEY is valid
 - [ ] Ensure model ID format is correct (use ID, not name)
 
 ### Issue: Personalities not changing response style
-- [ ] Run `!personality current` to verify it's set
+- [ ] Run `/personality current` to verify it's set
 - [ ] Try sending a new message (not a cached response)
 - [ ] Check personality name spelling matches exactly
 
@@ -206,7 +220,7 @@ Expected: Usage: `!code <code_snippet or language>`
 - [ ] Verify API key from https://serper.dev
 
 ### Issue: Code analysis not detailed
-- [ ] Try using the dedicated `!code` command instead of `!ask`
+- [ ] Try using the dedicated `/code` command instead of `/ask`
 - [ ] Verify personality is set to "code-analyzer"
 - [ ] Ensure code snippet is properly formatted
 
@@ -218,6 +232,7 @@ Expected: Usage: `!code <code_snippet or language>`
 - Web search adds 1-2 seconds latency (Serper API)
 - Large code snippets may take longer to analyze
 - Conversation history kept to 8 turns by default (configurable)
+- `/ask`, `/code`, and `/research` use a single final reply for a cleaner Discord UI
 
 ---
 
