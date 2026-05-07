@@ -8,7 +8,7 @@ A lightweight Discord chatbot built with Discord.js and the official OpenRouter 
 - Responds in servers when:
   - The bot is mentioned, or
   - A slash command is used
-- Maintains short per-channel/per-DM conversation history
+- Maintains short per-user-per-server/per-DM conversation history
 - Supports resettable chat memory
 - Uses OpenRouter Chat Completions API
 - **NEW: Switch between multiple AI models per session**
@@ -62,7 +62,7 @@ Search the web and get comprehensive information on any topic with sources.
 ### Basic Commands
 - `/help` - Show all available commands
 - `/ping` - Health check
-- `/clear` - Clear conversation memory for current channel/DM
+- `/clear` - Clear conversation memory for your current server/DM
 - `/ask question:<question>` - Ask the model directly
 
 All slash commands respond with a single final message when possible to keep the UI clean and reliable.
@@ -162,7 +162,7 @@ For this chatbot version, the critical intent is Message Content Intent.
 ## Notes
 
 - Each guild/user can have different model and personality settings
-- Conversation history is maintained separately per channel/DM
+- Conversation history is maintained separately per user in each server, plus per DM
 - If OpenRouter credentials are missing, the bot will send a setup reminder
 - Research mode requires SERPER_API_KEY for web search functionality
 - Model IDs must match those available on OpenRouter

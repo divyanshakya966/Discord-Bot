@@ -270,7 +270,7 @@ async function getOpenRouterClient() {
 }
 
 function getSessionKey(message) {
-  if (message.guildId) return `guild:${message.guildId}:channel:${message.channelId}`;
+  if (message.guildId) return `guild:${message.guildId}:user:${message.author?.id || message.user?.id}`;
   return `dm:${message.author?.id || message.user?.id}`;
 }
 
@@ -529,7 +529,7 @@ async function handleCommand(message, command, prompt) {
         '**Chatbot Commands**',
         `${COMMAND_PREFIX}help - Show this message`,
         `${COMMAND_PREFIX}ping - Check bot health`,
-        `${COMMAND_PREFIX}clear - Clear chat memory for this channel/DM`,
+        `${COMMAND_PREFIX}clear - Clear your chat memory for this server/DM`,
         `${COMMAND_PREFIX}ask question:<question> - Ask the AI`,
         '',
         '**Model & Personality Commands**',
@@ -558,7 +558,7 @@ async function handleCommand(message, command, prompt) {
   if (command === 'clear') {
     const sessionKey = getSessionKey(message);
     await clearConversationHistory(sessionKey);
-    await message.reply('Conversation memory cleared for this channel.');
+    await message.reply('Conversation memory cleared for this user.');
     return;
   }
 

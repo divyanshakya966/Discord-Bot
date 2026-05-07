@@ -16,7 +16,7 @@ const slashCommands = [
   new SlashCommandBuilder().setName('ping').setDescription('Check bot health'),
   new SlashCommandBuilder()
     .setName('clear')
-    .setDescription('Clear conversation memory for this channel or DM'),
+    .setDescription('Clear your conversation memory for this server or DM'),
   new SlashCommandBuilder()
     .setName('ask')
     .setDescription('Ask the AI a question')
