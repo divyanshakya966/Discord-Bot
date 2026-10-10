@@ -1,12 +1,20 @@
 {
   "name": "discord-openrouter-chatbot",
-  "version": "1.0.0",
+  "version": "2.3.0",
   "description": "Discord chatbot powered by OpenRouter-compatible models with slash-command UX",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
     "dev": "node --watch bot.js",
-    "deploy-commands": "node deploy-commands.js"
+    "deploy-commands": "node deploy-commands.js",
+    "test": "node --test tests/",
+    "test:bun": "bun test",
+    "check": "node --check bot.js && node --check commands.js && node --check bot-data.js && node --check deploy-commands.js",
+    "audit": "npm audit --audit-level=moderate",
+    "service:install": "mkdir -p ~/.config/systemd/user && cp systemd/discord-bot.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now discord-bot",
+    "service:logs": "journalctl --user -u discord-bot -f",
+    "service:stop": "systemctl --user stop discord-bot",
+    "service:restart": "systemctl --user restart discord-bot"
   },
   "dependencies": {
     "@openrouter/sdk": "^0.12.25",

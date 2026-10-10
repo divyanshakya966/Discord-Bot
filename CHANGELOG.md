@@ -1,5 +1,41 @@
 # Changelog - Premium Features Release
 
+## Version 2.3.0 - Girl Mode + Zero-Cost Local Run
+
+- **Girl mode:** single canonical `girl` personality named **Girl** — loving, playfully seductive, passionate by default, tasteful PG-13 with explicit-content decline boundary. Legacy `girl-text`/`casual` keys kept as hidden aliases (auto-normalized to `girl`, hidden from list/autocomplete).
+- **Zero-cost local:** default model now `google/gemma-3-27b-it:free`; `/research` falls back to free DuckDuckGo Instant Answer when `SERPER_API_KEY` is unset (Serper still preferred when configured); export-md now sends full history instead of first chunk only.
+- **Fedora KDE:** `systemd/discord-bot.service` user unit + `npm run service:*` scripts, README local-run guide (dnf Node 22, lingering, journalctl), `.env.example` free-default notes. Tests: 38 pass.
+
+## Version 2.2.0 - Interaction & Safety Round 2
+
+- Mention routing: `@bot help/ping/clear/stats` and `@bot <model|ask|…>` now hit embeds/commands instead of the LLM; prefix `!`/`/` commands work without a mention (`src/discord/routing.js` + tests).
+- Permission preflight (`ViewChannel/SendMessages/EmbedLinks`) with friendly hint instead of silent failure; guild welcome embed on `GuildCreate`.
+- Attachments: small text/code files fetched into context (100KB cap, 3 files), images acknowledged gracefully; empty-message guard.
+- Safety guardrails appended to all system prompts (no system-prompt reveal, no @everyone, destructive-command warnings).
+- Ops/docs: `LICENSE` (MIT), `.nvmrc` (22), Dockerfile non-root + HEALTHCHECK, version 2.1.0, CONTRIBUTING/TEST_GUIDE/PREMIUM_FEATURES synced. Tests: 32 pass.
+
+## Version 2.1.0 - Reliability & Interactivity Hardening
+
+### Fixed (P0)
+- Long replies auto-split under 2000 chars (no more DiscordAPIError crashes) via `src/utils/splitMessage.js` + `safeReply.js`.
+- Model/personality scope fixed to per-user (`guild:user`, `dm:user`); previously guild-wide and clobbered other users. See `src/store/sessions.js`.
+- Atomic writes (tmp+rename) + per-session mutex; concurrent appends no longer lose history (verified by `tests/store.test.js`).
+- LLM calls have timeout (`LLM_TIMEOUT_MS`), retry with backoff on 429/5xx, param-compat fallback preserved, user-facing errors sanitized.
+- Startup env validation, structured JSON logs with secret redaction, graceful SIGINT/SIGTERM shutdown, history prune on boot.
+
+### Performance (P1)
+- In-memory cache for history + prefs (was 4-5 disk reads/message); token-budget truncation (~6000) + turn cap.
+- Cooldowns (`COOLDOWN_MS`), input caps (`MAX_PROMPT_CHARS`, `MAX_CODE_CHARS`), typing loop refresh, Serper cache (10 min), real `/ping` (WS ping/uptime/avg latency).
+
+### Interactivity (P2)
+- Embeds for help/model/personality/stats/errors; buttons Retry/Continue/Clear; autocomplete for `/model set` and `/personality set`; progressive edits for long `/ask`; new `/stats` and `/export` (JSON file / Markdown).
+
+### Ops (P3)
+- New layout `src/{config,logger,utils,store,ai,discord}/`, 23 automated tests (`node --test tests/`), CI workflow, Dockerfile + .dockerignore, updated `.env.example`, README, SECURITY.
+- `deploy-commands.js` no longer crawls `data/`; `bot-data.js` models synced to 5 current + legacy fallback; `girl-text` kept as alias to new `casual`.
+
+Migration: run `npm run deploy-commands` (command signatures changed), restart. Prefs/history files are backward compatible.
+
 ## Version 2.0.0 - Premium Edition
 
 ### 🎉 Major Features Added

@@ -40,4 +40,6 @@ You can expect an acknowledgement within **48 hours** and a fix or mitigation wi
   npm audit
   ```
 - **Do not invite the bot with Administrator** to servers you don't fully control. Use minimum required permissions instead.
-- **Restrict sensitive commands** (`!lockserver`, `!dm`, `!ban`) to trusted staff roles via Discord's role hierarchy.
+- **Required Discord intents:** `Guilds`, `GuildMessages`, `MessageContent`, `DirectMessages`. Only enable Message Content if you use mention/DM replies.
+- **Cooldowns and input caps** (`COOLDOWN_MS`, `MAX_PROMPT_CHARS`, `MAX_CODE_CHARS`) are enabled by default to limit abuse and API cost. Tune via `.env`.
+- **Provider errors shown to users are sanitized** — full error detail goes to structured logs only. Set `LOG_LEVEL=debug` for troubleshooting, never in production with secrets.

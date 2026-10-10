@@ -1,171 +1,129 @@
 # Discord AI Chatbot
 
-A lightweight Discord chatbot built with Discord.js and the official OpenRouter SDK, now featuring advanced AI capabilities.
+A Discord chatbot built with Discord.js and the official OpenRouter SDK — now hardened for reliability, performance, and richer interaction.
 
 ## What This Version Does
 
 - Responds in DMs automatically
-- Responds in servers when:
-  - The bot is mentioned, or
-  - A slash command is used
-- Maintains short per-user-per-server/per-DM conversation history
-- Supports resettable chat memory
-- Uses OpenRouter Chat Completions API
-- **NEW: Switch between multiple AI models per session**
-- **NEW: Custom AI personalities with specialized modes**
-- **NEW: Slash command responses are single-message and reliable**
-- **NEW: Code analysis mode with expert programming feedback**
-- **NEW: Research mode with web search integration**
-
-## Premium Features
-
-### Multi-Model Switcher
-Switch between different AI models with a single command. Each session/guild can have its own preferred model.
-
-- `/model list` - View available models
-- `/model set model_id:<id>` - Switch to a different model
-- `/model current` - Show current model
-
-**Available Models:**
-- Google Gemma 4 (Free)
-- Meta Llama 3.1 70B
-- Mistral Large
-- OpenAI GPT-4 Turbo
-- Anthropic Claude 3.5 Sonnet
-
-### Custom AI Personalities
-Select different AI personalities for different conversational styles. Each personality has a specialized system prompt.
-
-- `/personality list` - View available personalities
-- `/personality set name:<name>` - Switch personality
-- `/personality current` - Show current personality
-
-**Built-in Personalities:**
-- **Standard** - General-purpose assistant
-- **Code Analyzer** - Expert code review and optimization
-- **Researcher** - Research assistant with sourced information
-- **Creative Writer** - Imaginative and engaging writing helper
-- **Educational Tutor** - Patient educator for learning
-
-### Code Analysis Mode
-Get expert analysis on code snippets with bug detection, optimization suggestions, and detailed explanations.
-
-- `/code code:<code>` - Analyze code with expert mode
-
-### Research Mode
-Search the web and get comprehensive information on any topic with sources.
-
-- `/research query:<query>` - Research a topic with web search
+- Responds in servers when mentioned, when replied to, or via slash command
+- Per-user conversation history (per server + per DM), resettable with `/clear`
+- Per-user model + personality prefs (fixed: previously guild-wide)
+- OpenRouter Chat Completions with retry, timeout, and param-compat fallback
+- Long replies auto-split under Discord's 2000-char limit (no more crashes)
+- Embeds + buttons (Retry / Continue / Clear) + autocomplete for models/personalities
+- Code analysis mode, research mode (cached web search), `/stats`, `/export`
+- Cooldowns + input caps to protect API quota; structured logs; graceful shutdown
 
 ## Commands
 
-### Basic Commands
-- `/help` - Show all available commands
-- `/ping` - Health check
-- `/clear` - Clear conversation memory for your current server/DM
-- `/ask question:<question>` - Ask the model directly
+### Basic
+- `/help` - Embed with all commands
+- `/ping` - WS ping, uptime, request/error counts, avg LLM latency
+- `/clear` - Clear your memory for this server/DM
+- `/ask question:<question>` - Ask the AI (progressive edits for long answers)
+- `/stats` - Usage stats + your current model/personality
+- `/export [format:json|md]` - Export history (JSON file or Markdown)
 
-All slash commands respond with a single final message when possible to keep the UI clean and reliable.
-
-### Model & Personality Commands
-- `/model list` - List available AI models
-- `/model set model_id:<id>` - Switch to a different model (type any valid OpenRouter model ID)
+### Model & Personality (per-user, autocomplete)
+- `/model list` - Embed list
+- `/model set model:<id>` - Switch model; accepts any valid OpenRouter ID (custom IDs allowed)
 - `/model current` - Show current model
-- `/personality list` - List available personalities
-- `/personality set name:<name>` - Switch personality
-- `/personality current` - Show current personality
+- `/personality list` / `/personality set name:<name>` / `/personality current`
 
-### Specialized Modes
-- `/code code:<code>` - Analyze code with expert mode
-- `/research query:<query>` - Search and research a topic
+**Models:** Gemma 3 27B (Free, default — zero cost), Llama 3.1 70B, Mistral Large, GPT-4 Turbo, Claude 3.5 Sonnet (+ legacy MythoMax for old prefs).
+**Personalities:** Standard, Code Analyzer, Researcher, Creative, Tutor, **Girl** (`girl` — loving, playfully seductive, tasteful PG-13 by default).
 
-You can also mention the bot and type your prompt.
+### Specialized
+- `/code code:<code>` - Expert code review (max 6000 chars by default; text-file attachments also read)
+- `/research query:<query>` - Web search + AI synthesis (Serper if configured, else free DuckDuckGo fallback, 10-min cache)
+
+You can also mention the bot, or reply directly to one of its messages to continue.
 
 ## Slash Command Setup
 
-Slash commands only appear after Discord knows about them. Do this once after you add or change commands:
-
-1. In the Discord Developer Portal, open your application and copy the **Application ID** into `DISCORD_CLIENT_ID`.
-2. Invite the bot with both `bot` and `applications.commands` scopes.
-3. Run `npm run deploy-commands`.
-4. Restart the bot.
-
-Global commands can take longer to propagate than guild-scoped ones, but you do not need any extra server ID setup for the default workflow.
-
-For the cleanest user experience, the bot defers slash commands immediately and sends a single final reply for commands like `/ask`, `/code`, and `/research`.
+1. Copy Application ID into `DISCORD_CLIENT_ID`.
+2. Invite with `bot` + `applications.commands` scopes.
+3. Run `npm run deploy-commands` after any command change (required after this upgrade — `/model set` signature changed, `/stats` + `/export` added).
+4. Restart the bot. Global commands can take minutes to propagate.
 
 ## Quick Start
 
-1. Install dependencies:
-
 ```bash
 npm install
-```
-
-2. Create your environment file:
-
-```bash
-copy .env.example .env
-```
-
-3. Fill in at least:
-
-- `DISCORD_TOKEN`
-- `OPENROUTER_API_KEY`
-- `OPENROUTER_MODEL`
-
-4. (Optional) For Research Mode, add:
-
-- `SERPER_API_KEY` - Get free tier at https://serper.dev
-
-5. Start the bot:
-
-```bash
+cp .env.example .env   # (Windows: copy .env.example .env)
+# fill DISCORD_TOKEN, DISCORD_CLIENT_ID, OPENROUTER_API_KEY, OPENROUTER_MODEL
+npm run deploy-commands
 npm start
 ```
 
+Research mode (optional): add `SERPER_API_KEY` from https://serper.dev for best quality. Without it, a free DuckDuckGo fallback is used automatically — no cost.
+
+## Fedora (KDE Plasma) Local Run — Zero Hosting Cost
+
+This bot is tuned for running on your own Fedora machine. No VPS needed.
+
+```bash
+# 1. Node 22 (Fedora 40+)
+sudo dnf install -y nodejs npm
+node --version  # want >= 18, ideally 22
+
+# 2. Install + configure
+npm install
+cp .env.example .env
+# fill DISCORD_TOKEN, DISCORD_CLIENT_ID, OPENROUTER_API_KEY
+# OPENROUTER_MODEL defaults to google/gemma-3-27b-it:free (free)
+npm run deploy-commands
+npm test
+
+# 3a. Run in foreground (Konsole)
+npm start
+
+# 3b. Or run as a user service (auto-restart, survives logout if lingering enabled)
+npm run service:install
+npm run service:logs     # follow logs (journald)
+# manage: npm run service:restart / npm run service:stop
+# enable lingering so it runs after logout: loginctl enable-linger $USER
+```
+
+Cost-saving defaults for local use: free default model, DuckDuckGo fallback (no Serper needed), cooldowns + input caps, cached prefs/history, 30-day history prune, JSON logs (no external monitoring needed). Data stays in `./data/`.
+
 ## Environment Variables
 
-### Required
+Required: `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` (e.g. `google/gemma-3-27b-it:free`).
 
-- `DISCORD_TOKEN` - Discord bot token
-- `DISCORD_CLIENT_ID` - Discord application/client ID used to register slash commands
-- `OPENROUTER_API_KEY` - OpenRouter API key
-- `OPENROUTER_MODEL` - Default model ID from OpenRouter, e.g., `google/gemma-4-26b-a4b-it:free`
+Optional: `OPENROUTER_BASE_URL`, `SYSTEM_PROMPT` (overrides Standard personality), `MAX_HISTORY` (8), `MAX_TOKENS` (1000), `TEMPERATURE` (0.85), `TOP_P`, `FREQUENCY_PENALTY`, `PRESENCE_PENALTY`, `SERPER_API_KEY`.
 
-### Optional
+Safety tuning: `MAX_PROMPT_CHARS` (4000), `MAX_CODE_CHARS` (6000), `COOLDOWN_MS` (4000), `LLM_TIMEOUT_MS` (60000), `LLM_MAX_RETRIES` (2), `LOG_LEVEL` (info), `DATA_DIR` (./data).
 
-- `OPENROUTER_BASE_URL` - Defaults to `https://openrouter.ai/api/v1`
-- `SYSTEM_PROMPT` - Default system instruction (overridden by personalities)
-- `MAX_HISTORY` - Number of recent turns to keep (default `8`)
-- `MAX_TOKENS` - Max output tokens per request (default `500`)
-- `TEMPERATURE` - Sampling temperature (default `0.7`)
-- `SERPER_API_KEY` - For research mode web search (optional, get free tier at serper.dev)
+## Testing & Ops
 
-## Discord Developer Portal Setup
-
-Enable these intents for your bot:
-
-- Message Content Intent
-- Server Members Intent (optional for this version)
-- Presence Intent (not required)
-
-For this chatbot version, the critical intent is Message Content Intent.
+```bash
+npm test          # node --test tests/ (38 automated checks)
+npm run check     # syntax check
+```
+- CI (`.github/workflows/ci.yml`): install, syntax check, tests, `npm audit`.
+- Docker (optional, not needed locally): `docker build -t discord-bot . && docker run --env-file .env -v ./data:/app/data discord-bot`
+- Fedora service: `systemd/discord-bot.service` + `npm run service:*` scripts above.
+- Logs are JSON lines with redacted secrets. Health via `/ping` + `/stats`.
 
 ## Data Storage
 
-- Conversation memory is saved to `data/` and persists across restarts
-- Model preferences are stored per guild/user
-- Custom personalities are stored per guild/user
-- The `data/` folder is ignored by Git so local chat logs stay out of commits
+- `data/` (gitignored): per-user history `guild_<gid>_user_<uid>.json` / `dm_<uid>.json`, `model_preferences.json`, `personality_preferences.json`, `personalities.json` (custom only).
+- Writes are atomic (tmp + rename), per-session serialized, with in-memory cache. History trimmed by turns (MAX_HISTORY) and ~6000-token budget.
 
 ## Notes
 
-- Each guild/user can have different model and personality settings
-- Conversation history is maintained separately per user in each server, plus per DM
-- If OpenRouter credentials are missing, the bot will send a setup reminder
-- Research mode requires SERPER_API_KEY for web search functionality
-- Model IDs must match those available on OpenRouter
+- Settings are per-user now. Changing model/personality no longer affects the whole server.
+- Provider errors shown to users are sanitized; details go to logs.
+- If OpenRouter key is missing the bot runs degraded (replies with setup reminder).
+
+## Troubleshooting
+
+- **Bot doesn't respond:** check it is in the server, Message Content intent is on, `DISCORD_TOKEN` is valid, and `npm run deploy-commands` was run after command changes.
+- **Slash commands missing:** global commands take minutes to propagate; for instant testing set `DISCORD_GUILD_ID` and redeploy.
+- **Model errors / quota:** try `/model list` and pick another model; free default is `google/gemma-3-27b-it:free`.
+- **Research has no web results:** add `SERPER_API_KEY`, otherwise the free DuckDuckGo fallback applies automatically.
+- **Service won't start (Fedora):** run `journalctl --user -u discord-bot -n 50` and verify `.env` values.
 
 ## License
 

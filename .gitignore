@@ -1,4 +1,33 @@
+# Dependencies
 node_modules/
+
+# Secrets — never commit real tokens
 .env
-*.log
+.env.local
+.env.*.local
+
+# Runtime data (chat logs, prefs) — local only
 data/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Lockfiles for alternate package managers
+bun.lock
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.tmp
+*.temp
+
+# Build / coverage output
+dist/
+build/
+coverage/
+.tmp/

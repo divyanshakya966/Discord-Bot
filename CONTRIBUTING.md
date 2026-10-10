@@ -82,9 +82,9 @@ Test all changes on a **private Discord server** you own before submitting.
 
 3. Test your changes manually — try the happy path and also invalid inputs.
 
-4. Update the relevant parts of `README.md`:
-   - Add your command to the correct table in [Command Reference](README.md#-command-reference)
-   - Add it to the `!help` embed inside `bot.js`
+4. Update the relevant parts of `README.md` and `CHANGELOG.md`.
+   - Slash commands live in `commands.js` — after changing them run `npm run deploy-commands`.
+   - Add/extend tests in `tests/` and run `npm test`.
 
 5. Push and open a Pull Request:
    ```bash
@@ -99,24 +99,16 @@ Test all changes on a **private Discord server** you own before submitting.
 
 - Use `const`/`let`, never `var`
 - Use `async/await`, never raw `.then()` chains
-- All commands **must** include a permission check before executing
-- All commands **must** handle missing arguments gracefully (reply with usage hint)
-- Keep helper functions at the top of the file, commands in logical groups
-- Use the existing `embed()` helper for all Discord embeds — don't build `EmbedBuilder` inline
-- Use the existing `hasPerms()` helper for permission checks
-- Use `sendLog()` for all audit log entries
+- All user input **must** be length-capped (`MAX_PROMPT_CHARS` / `MAX_CODE_CHARS`) before sending to the LLM
+- All bot replies **must** go through `src/utils/safeReply.js` (auto-split under 2000 chars) with `allowedMentions: { parse: [] }`
+- All Discord replies **should** use embeds from `src/discord/embeds.js` (`helpEmbed`, `infoEmbed`, `errorEmbed`)
+- Pure logic (routing, splitting, tokens, errors) **must** live in `src/` with tests in `tests/` (`node --test tests/`)
+- Never log secrets — use `src/logger.js` (auto-redacts tokens/keys)
 
 **Good:**
 ```js
-if (command === 'example') {
-  if (!hasPerms(msg.member, PermissionFlagsBits.ManageMessages))
-    return msg.reply('❌ You need **Manage Messages** permission.');
-  const target = msg.mentions.users.first();
-  if (!target) return msg.reply('❌ Usage: `!example @user`');
-  // ... logic
-  await sendLog(msg.guild, `✅ Example ran by **${msg.author.tag}** on **${target.tag}**`);
-  return msg.reply({ embeds: [embed('✅ Done', `Action completed.`, 0x57f287)] });
-}
+const { safeReplyToMessage } = require('./src/utils/safeReply');
+if (!prompt) return safeReplyToMessage(message, 'Usage: `/ask question:<…>`');
 ```
 
 ---
@@ -135,7 +127,7 @@ Use conventional commit prefixes:
 
 **Examples:**
 ```
-feat: add !tempban command with auto-unban timer
+feat: add /timeout command with auto-unban timer
 fix: purge not deleting bot message after cleanup
 docs: add VPS setup instructions for Arch Linux
 refactor: extract permission check into reusable helper
