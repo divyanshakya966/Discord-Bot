@@ -3,7 +3,7 @@ const { Client, GatewayIntentBits, Partials, Events, AttachmentBuilder } = requi
 
 const { CONFIG, validateOrExit } = require('./src/config');
 const logger = require('./src/logger');
-const { AVAILABLE_MODELS, DEFAULT_PERSONALITIES } = require('./bot-data');
+const { AVAILABLE_MODELS, DEFAULT_PERSONALITIES, RETIRED_MODEL_IDS } = require('./bot-data');
 const { getSessionKey, getModelKey, getPersonalityKey } = require('./src/store/sessions');
 const { createHistoryStore, createJsonStore } = require('./src/store/historyStore');
 const { ensureDir } = require('./src/store/atomic');
@@ -68,7 +68,11 @@ async function loadPersonalities() {
 
 async function getSessionModel(source) {
   const key = getModelKey(source);
-  const stored = await modelPrefs.get(key);
+  let stored = await modelPrefs.get(key);
+  if (stored && RETIRED_MODEL_IDS[stored]) {
+    stored = RETIRED_MODEL_IDS[stored];
+    await modelPrefs.set(key, stored);
+  }
   if (stored && (AVAILABLE_MODELS.some(m => m.id === stored) || isValidCustomModelId(stored))) return stored;
   return CONFIG.OPENROUTER_MODEL;
 }

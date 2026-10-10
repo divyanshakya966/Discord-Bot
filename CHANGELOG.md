@@ -1,9 +1,14 @@
 # Changelog - Premium Features Release
 
+## Version 2.3.1 - Fix retired free model
+
+- OpenRouter retired `google/gemma-3-27b-it:free` (paid-only now). Default and list moved to live `google/gemma-4-26b-a4b-it:free`, plus an `openrouter/free` Auto router option.
+- Saved prefs pointing at retired IDs auto-migrate on next request (`RETIRED_MODEL_IDS`, no action needed). Just restart the bot.
+
 ## Version 2.3.0 - Girl Mode + Zero-Cost Local Run
 
 - **Girl mode:** single canonical `girl` personality named **Girl** — loving, playfully seductive, passionate by default, tasteful PG-13 with explicit-content decline boundary. Legacy `girl-text`/`casual` keys kept as hidden aliases (auto-normalized to `girl`, hidden from list/autocomplete).
-- **Zero-cost local:** default model now `google/gemma-3-27b-it:free`; `/research` falls back to free DuckDuckGo Instant Answer when `SERPER_API_KEY` is unset (Serper still preferred when configured); export-md now sends full history instead of first chunk only.
+- **Zero-cost local:** default model now `google/gemma-4-26b-a4b-it:free`; `/research` falls back to free DuckDuckGo Instant Answer when `SERPER_API_KEY` is unset (Serper still preferred when configured); export-md now sends full history instead of first chunk only.
 - **Fedora KDE:** `systemd/discord-bot.service` user unit + `npm run service:*` scripts, README local-run guide (dnf Node 22, lingering, journalctl), `.env.example` free-default notes. Tests: 38 pass.
 
 ## Version 2.2.0 - Interaction & Safety Round 2

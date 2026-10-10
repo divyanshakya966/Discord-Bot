@@ -30,7 +30,7 @@ A Discord chatbot built with Discord.js and the official OpenRouter SDK — now 
 - `/model current` - Show current model
 - `/personality list` / `/personality set name:<name>` / `/personality current`
 
-**Models:** Gemma 3 27B (Free, default — zero cost), Llama 3.1 70B, Mistral Large, GPT-4 Turbo, Claude 3.5 Sonnet (+ legacy MythoMax for old prefs).
+**Models:** Gemma 4 26B (Free, default — zero cost), Auto Free Router, Llama 3.1 70B, Mistral Large, GPT-4 Turbo, Claude 3.5 Sonnet (+ legacy MythoMax for old prefs).
 **Personalities:** Standard, Code Analyzer, Researcher, Creative, Tutor, **Girl** (`girl` — loving, playfully seductive, tasteful PG-13 by default).
 
 ### Specialized
@@ -71,7 +71,7 @@ node --version  # want >= 18, ideally 22
 npm install
 cp .env.example .env
 # fill DISCORD_TOKEN, DISCORD_CLIENT_ID, OPENROUTER_API_KEY
-# OPENROUTER_MODEL defaults to google/gemma-3-27b-it:free (free)
+# OPENROUTER_MODEL defaults to google/gemma-4-26b-a4b-it:free (free)
 npm run deploy-commands
 npm test
 
@@ -89,7 +89,7 @@ Cost-saving defaults for local use: free default model, DuckDuckGo fallback (no 
 
 ## Environment Variables
 
-Required: `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` (e.g. `google/gemma-3-27b-it:free`).
+Required: `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` (e.g. `google/gemma-4-26b-a4b-it:free`).
 
 Optional: `OPENROUTER_BASE_URL`, `SYSTEM_PROMPT` (overrides Standard personality), `MAX_HISTORY` (8), `MAX_TOKENS` (1000), `TEMPERATURE` (0.85), `TOP_P`, `FREQUENCY_PENALTY`, `PRESENCE_PENALTY`, `SERPER_API_KEY`.
 
@@ -121,7 +121,7 @@ npm run check     # syntax check
 
 - **Bot doesn't respond:** check it is in the server, Message Content intent is on, `DISCORD_TOKEN` is valid, and `npm run deploy-commands` was run after command changes.
 - **Slash commands missing:** global commands take minutes to propagate; for instant testing set `DISCORD_GUILD_ID` and redeploy.
-- **Model errors / quota:** try `/model list` and pick another model; free default is `google/gemma-3-27b-it:free`.
+- **Model errors / quota:** try `/model list` and pick another model; free default is `google/gemma-4-26b-a4b-it:free`.
 - **Research has no web results:** add `SERPER_API_KEY`, otherwise the free DuckDuckGo fallback applies automatically.
 - **Service won't start (Fedora):** run `journalctl --user -u discord-bot -n 50` and verify `.env` values.
 

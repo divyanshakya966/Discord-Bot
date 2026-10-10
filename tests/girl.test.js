@@ -40,7 +40,15 @@ test('default model is free-tier', () => {
   // Unset env-driven default check: config module default literal
   const fs = require('node:fs');
   const src = fs.readFileSync(__dirname + '/../src/config.js', 'utf-8');
-  assert.ok(src.includes('google/gemma-3-27b-it:free'), 'default model should be free Gemma');
+  assert.ok(src.includes('google/gemma-4-26b-a4b-it:free'), 'default model should be free Gemma');
+});
+
+test('retired model IDs migrate to live replacements', () => {
+  const { RETIRED_MODEL_IDS, AVAILABLE_MODELS } = require('../bot-data');
+  for (const [oldId, newId] of Object.entries(RETIRED_MODEL_IDS)) {
+    assert.ok(!AVAILABLE_MODELS.some(m => m.id === oldId), `${oldId} must not be listed`);
+    assert.ok(AVAILABLE_MODELS.some(m => m.id === newId), `${newId} must be listed`);
+  }
 });
 
 test('systemd service file exists and is valid-ish', () => {

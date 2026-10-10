@@ -1,11 +1,17 @@
 const AVAILABLE_MODELS = [
-  { id: 'google/gemma-3-27b-it:free', name: 'Gemma 3 27B (Free)', maxTokens: 1000 },
+  { id: 'google/gemma-4-26b-a4b-it:free', name: 'Gemma 4 26B (Free)', maxTokens: 1000 },
+  { id: 'openrouter/free', name: 'Auto (Free Router)', maxTokens: 1000 },
   { id: 'meta-llama/llama-3.1-70b-instruct', name: 'Llama 3.1 70B', maxTokens: 1000 },
   { id: 'mistralai/mistral-large', name: 'Mistral Large', maxTokens: 1000 },
   { id: 'openai/gpt-4-turbo', name: 'GPT-4 Turbo', maxTokens: 1000 },
   { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', maxTokens: 1000 },
   { id: 'gryphe/mythomax-l2-13b', name: 'MythoMax L2 13B (Legacy)', maxTokens: 500 },
 ];
+
+// Retired IDs auto-migrated to a live replacement on read (old prefs keep working).
+const RETIRED_MODEL_IDS = {
+  'google/gemma-3-27b-it:free': 'google/gemma-4-26b-a4b-it:free',
+};
 
 const DEFAULT_PERSONALITIES = {
   standard: {
@@ -55,4 +61,5 @@ module.exports = {
   AVAILABLE_MODELS,
   DEFAULT_PERSONALITIES,
   HIDDEN_PERSONALITY_KEYS,
+  RETIRED_MODEL_IDS,
 };
