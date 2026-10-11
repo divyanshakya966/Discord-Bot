@@ -4,7 +4,7 @@
 
 - `/group on|off|status|clear` (slash + prefix + mention): opt a channel into one shared history file (`group_<channel>.json`) instead of per-user memory. Chatter is recorded silently with author tags; mentions, replies, `/ask`, `/code`, `/research` and Retry/Continue answer from the shared context.
 - Model, personality, cooldowns and Retry memory stay per-user; `/clear` and `/export` stay personal; toggling/wiping needs Manage Channels. DMs are excluded (already 1:1).
-- Discussion entries are tagged by server display name (sanitized against history forgery); Retry/Continue/Clear buttons are clicker-scoped, so nobody can trigger them on another user's behalf.
+- Discussion entries are tagged by server display name (sanitized against history forgery) — every group turn, including the bot's answers to mentions and commands, carries its author tag; Retry/Continue/Clear buttons are clicker-scoped, so nobody can trigger them on another user's behalf.
 - `BOT_OWNER_IDS`: bot operators bypass the Manage Channels gate for group control (works in servers they don't moderate; needs a restart after setting).
 
 ## Version 2.4.0 - Paged replies, Discord-safe markdown, complete outputs

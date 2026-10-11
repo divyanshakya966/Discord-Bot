@@ -154,8 +154,17 @@ function canManageGroup(replyMode) {
 }
 
 function resolveAuthorTag(message) {
-  const raw = message.member?.displayName || message.author?.username || message.author?.id || 'user';
+  const raw = message.member?.displayName || message.member?.nick
+    || message.author?.username || message.author?.id || 'user';
   return String(raw).replace(/[\r\n\t]+/g, ' ').trim().slice(0, 32) || 'user';
+}
+
+// In group channels every stored user turn carries its author so the shared
+// history (and the model reading it) can tell participants apart. Personal
+// histories keep raw text untouched.
+function formatHistoryEntry(source, text, historyKey) {
+  if (!historyKey || !historyKey.startsWith('group:')) return text;
+  return `${resolveAuthorTag(source)}: ${text}`;
 }
 
 async function observeGroupMessage(message) {
@@ -426,9 +435,10 @@ async function runChat({ source, channel, userPrompt, replyMode }) {
   const sessionKey = getSessionKey(source);
   rememberPrompt(sessionKey, userPrompt);
   const historyKey = await resolveHistoryKey(source);
+  const historyPrompt = formatHistoryEntry(source, userPrompt, historyKey);
   const history = await historyStore.load(historyKey);
   const sessionModel = await getSessionModel(source);
-  const modelMessages = await buildModelMessages(source, history, userPrompt);
+  const modelMessages = await buildModelMessages(source, history, historyPrompt);
 
   const stopTyping = startTypingLoop(channel);
   const t0 = Date.now();
@@ -450,7 +460,7 @@ async function runChat({ source, channel, userPrompt, replyMode }) {
     const ms = Date.now() - t0;
     trackRequest(ms, false);
     log.info('AI reply', { model: usedModel, ms, tokens: normalizeUsage(usage) });
-    await historyStore.append(historyKey, userPrompt, assistantReply);
+    await historyStore.append(historyKey, historyPrompt, assistantReply);
 
     return sendPagedAIReply(replyMode, assistantReply);
   } catch (error) {
@@ -653,7 +663,7 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
     const messages = [
       { role: 'system', content: buildSystemPrompt(analyzer.prompt) },
       ...truncateHistory(history, CONFIG.MAX_HISTORY, 6000),
-      { role: 'user', content: `Please analyze this code:\n\`\`\`\n${prompt}\n\`\`\`` },
+      { role: 'user', content: formatHistoryEntry(source, `Please analyze this code:\n\`\`\`\n${prompt}\n\`\`\``, historyKey) },
     ];
     const cd = checkCooldown(source, 'code');
     if (!cd.allowed) {
@@ -668,7 +678,7 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
     try {
       const { text: analysis } = await queryOpenRouter(messages, sessionModel);
       trackRequest(Date.now() - t0, false);
-      await historyStore.append(historyKey, `Code Analysis: ${prompt.slice(0, 120)}`, analysis);
+      await historyStore.append(historyKey, formatHistoryEntry(source, `Code Analysis: ${prompt.slice(0, 120)}`, historyKey), analysis);
       await sendPagedAIReply(replyMode, analysis);
     } catch (e) {
       trackRequest(Date.now() - t0, true);
@@ -713,11 +723,11 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
       const messages = [
         { role: 'system', content: buildSystemPrompt(researcher.prompt) },
         ...truncateHistory(history, CONFIG.MAX_HISTORY, 6000),
-        { role: 'user', content: `Research this topic:\n\n${prompt}${context}` },
+        { role: 'user', content: formatHistoryEntry(source, `Research this topic:\n\n${prompt}${context}`, historyKey) },
       ];
       const { text: research } = await queryOpenRouter(messages, sessionModel);
       trackRequest(Date.now() - t0, false);
-      await historyStore.append(historyKey, `Research: ${prompt}`, research);
+      await historyStore.append(historyKey, formatHistoryEntry(source, `Research: ${prompt}`, historyKey), research);
       await sendPagedAIReply(replyMode, research);
     } catch (e) {
       trackRequest(Date.now() - t0, true);
@@ -740,7 +750,7 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
 
 // ---------- Slash wiring ----------
 function messageProxyFromInteraction(interaction) {
-  return { guildId: interaction.guildId, channelId: interaction.channelId, author: interaction.user, user: interaction.user };
+  return { guildId: interaction.guildId, channelId: interaction.channelId, author: interaction.user, user: interaction.user, member: interaction.member ?? null };
 }
 
 async function handleSlashCommand(interaction) {
@@ -844,7 +854,7 @@ async function handleButton(interaction) {
   const stopTyping = startTypingLoop(channel);
   try {
     const { text: reply } = await queryOpenRouter(modelMessages, sessionModel);
-    await historyStore.append(historyKey, prompt, reply);
+    await historyStore.append(historyKey, formatHistoryEntry(source, prompt, historyKey), reply);
     await sendPagedFollowUp(interaction, reply);
   } catch (e) {
     await interaction.followUp({ embeds: [errorEmbed((e?.message || 'Failed').slice(0, 500))], flags: MessageFlags.Ephemeral }).catch(() => {});
@@ -1052,4 +1062,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { client, handleCommand, handleButton, handleSlashCommand, handleAutocomplete, runChat, getSessionModel, getSessionPersonality, queryOpenRouter, sendPagedAIReply, sendPagedFollowUp, getEffectiveMaxTokens, lastPromptBySession, pruneOldHistories, resolveReplyTarget, isGroupChannel, setGroupChannel, getGroupHistoryKey, resolveHistoryKey, resolveAuthorTag, isBotOwner, CONTINUE_PROMPT, MAX_AUTO_CONTINUATIONS, AUTO_CONTINUE_CHAR_BUDGET };
+module.exports = { client, handleCommand, handleButton, handleSlashCommand, handleAutocomplete, runChat, getSessionModel, getSessionPersonality, queryOpenRouter, sendPagedAIReply, sendPagedFollowUp, getEffectiveMaxTokens, lastPromptBySession, pruneOldHistories, resolveReplyTarget, isGroupChannel, setGroupChannel, getGroupHistoryKey, resolveHistoryKey, resolveAuthorTag, formatHistoryEntry, isBotOwner, CONTINUE_PROMPT, MAX_AUTO_CONTINUATIONS, AUTO_CONTINUE_CHAR_BUDGET };

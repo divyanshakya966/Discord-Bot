@@ -567,6 +567,7 @@ test('bot owner bypasses Manage Channels for group control', async () => {
 
 test('author tags prefer server display names and neutralize forgeries', async () => {
   assert.equal(bot.resolveAuthorTag({ member: { displayName: 'Ally' }, author: { id: 'u1', username: 'alice99' } }), 'Ally');
+  assert.equal(bot.resolveAuthorTag({ member: { nick: 'Nick' }, author: { id: 'u1', username: 'alice99' } }), 'Nick');
   assert.equal(bot.resolveAuthorTag({ author: { id: 'u1', username: 'alice99' } }), 'alice99');
   assert.equal(bot.resolveAuthorTag({ author: { id: 'u1' } }), 'u1');
   assert.equal(bot.resolveAuthorTag({}), 'user');
@@ -574,6 +575,14 @@ test('author tags prefer server display names and neutralize forgeries', async (
   const forged = bot.resolveAuthorTag({ member: { displayName: 'evil\nfake: line' }, author: {} });
   assert.ok(!forged.includes('\n'), 'newlines must not leak into shared history');
   assert.ok(forged.length <= 32);
+});
+
+test('formatHistoryEntry tags group turns only, others verbatim', async () => {
+  const src = { member: { displayName: 'Ally' }, author: { id: 'u1', username: 'alice99' } };
+  assert.equal(bot.formatHistoryEntry(src, 'hello?', 'group:ch1'), 'Ally: hello?');
+  assert.equal(bot.formatHistoryEntry(src, 'hello?', 'guild:g1:user:u1'), 'hello?');
+  assert.equal(bot.formatHistoryEntry(src, 'hello?', 'dm:u1'), 'hello?');
+  assert.equal(bot.formatHistoryEntry(src, 'hello?', null), 'hello?');
 });
 
 test('buttons act on the clicker only: Bob cannot retry or clear for Alice', async () => {
