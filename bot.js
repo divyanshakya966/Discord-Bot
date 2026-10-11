@@ -1,5 +1,5 @@
 const path = require('path');
-const { Client, GatewayIntentBits, Partials, Events, AttachmentBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, Events, AttachmentBuilder, MessageFlags } = require('discord.js');
 
 const { CONFIG, validateOrExit } = require('./src/config');
 const logger = require('./src/logger');
@@ -12,6 +12,8 @@ const { safeReplyToMessage, safeEditReply } = require('./src/utils/safeReply');
 const {
   extractProviderErrorMessage,
   isLikelyParameterCompatibilityError,
+  isModelUnavailableError,
+  describeProviderError,
   toUserFacingProviderError,
 } = require('./src/ai/errors');
 const { withRetry } = require('./src/ai/retry');
@@ -112,6 +114,13 @@ function checkCooldown(source, label = 'request') {
   return r;
 }
 
+function rememberPrompt(sessionKey, prompt) {
+  lastPromptBySession.set(sessionKey, prompt);
+  if (lastPromptBySession.size > 1000) {
+    lastPromptBySession.delete(lastPromptBySession.keys().next().value);
+  }
+}
+
 function trackRequest(latencyMs, failed = false) {
   stats.totalRequests++;
   stats.totalLatencyMs += latencyMs;
@@ -134,65 +143,83 @@ async function getOpenRouterClient() {
 }
 
 // Single streaming implementation used by both message and slash paths.
+// Returns { text, model, usage }. Falls back to the default model once when the
+// session model is unavailable (retired slug, no route, key has no access).
 async function queryOpenRouter(messages, modelId, onChunk) {
   const openrouter = await getOpenRouterClient();
   const model = modelId || CONFIG.OPENROUTER_MODEL;
 
-  const base = { model, messages, maxTokens: CONFIG.MAX_TOKENS, temperature: CONFIG.TEMPERATURE, stream: true };
-  const rich = { ...base, topP: CONFIG.TOP_P, frequencyPenalty: CONFIG.FREQUENCY_PENALTY, presencePenalty: CONFIG.PRESENCE_PENALTY };
+  async function attempt(current) {
+    const base = { model: current, messages, maxTokens: CONFIG.MAX_TOKENS, temperature: CONFIG.TEMPERATURE, stream: true };
+    const rich = { ...base, topP: CONFIG.TOP_P, frequencyPenalty: CONFIG.FREQUENCY_PENALTY, presencePenalty: CONFIG.PRESENCE_PENALTY };
 
-  async function sendOnce(chatRequest) {
-    return withRetry(
-      () => openrouter.chat.send({ chatRequest }),
-      { retries: CONFIG.LLM_MAX_RETRIES, baseDelayMs: 800, timeoutMs: CONFIG.LLM_TIMEOUT_MS }
-    );
-  }
-
-  let stream;
-  try {
-    stream = await sendOnce(rich);
-  } catch (error) {
-    const reason = extractProviderErrorMessage(error);
-    if (isLikelyParameterCompatibilityError(reason)) {
-      logger.warn('Retrying with reduced params', { model, reason: reason.slice(0, 200) });
-      stream = await sendOnce(base);
-    } else {
-      throw new Error(toUserFacingProviderError(error, model));
+    async function sendOnce(chatRequest) {
+      return withRetry(
+        () => openrouter.chat.send({ chatRequest }),
+        { retries: CONFIG.LLM_MAX_RETRIES, baseDelayMs: 800, timeoutMs: CONFIG.LLM_TIMEOUT_MS }
+      );
     }
-  }
 
-  let full = '';
-  try {
+    let stream;
+    try {
+      stream = await sendOnce(rich);
+    } catch (error) {
+      const reason = extractProviderErrorMessage(error);
+      if (isLikelyParameterCompatibilityError(reason)) {
+        logger.warn('Retrying with reduced params', { model: current, reason: reason.slice(0, 200) });
+        stream = await sendOnce(base);
+      } else {
+        throw error;
+      }
+    }
+
+    let full = '';
+    let usage = null;
     for await (const chunk of stream) {
       const content = chunk.choices?.[0]?.delta?.content;
       if (content) {
         full += content;
         if (onChunk) await onChunk(content);
       }
+      if (chunk.usage) usage = chunk.usage;
     }
+    return { text: full.trim() || 'No response returned by model.', usage };
+  }
+
+  try {
+    const { text, usage } = await attempt(model);
+    return { text, model, usage };
   } catch (error) {
+    const fallback = CONFIG.OPENROUTER_MODEL;
+    if (model !== fallback && isModelUnavailableError(error)) {
+      logger.warn('Session model unavailable, falling back', { detail: describeProviderError(error), from: model, to: fallback });
+      try {
+        const fb = await attempt(fallback);
+        return { text: fb.text, model: fallback, usage: fb.usage };
+      } catch (fallbackError) {
+        logger.error('Fallback model failed', { detail: describeProviderError(fallbackError), model: fallback });
+        throw new Error(toUserFacingProviderError(fallbackError, fallback));
+      }
+    }
+    logger.error('Model request failed', { detail: describeProviderError(error), model });
     throw new Error(toUserFacingProviderError(error, model));
   }
-  return full.trim() || 'No response returned by model.';
 }
 
 // ---------- Web search ----------
-async function searchDuckDuckGo(query) {
-  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(12000), headers: { 'User-Agent': 'DiscordBot/2.2' } });
-  if (!res.ok) throw new Error(`DDG ${res.status}`);
-  const data = await res.json();
-  const out = [];
-  if (data.AbstractText) out.push(`**${data.Heading || 'Summary'}** — ${data.AbstractText}\n${data.AbstractURL || ''}`.trim());
-  for (const t of (data.RelatedTopics || []).slice(0, 3)) {
-    if (typeof t?.Text === 'string' && t.Text) out.push(`**Related** — ${t.Text.slice(0, 300)}${t.FirstURL ? `\n${t.FirstURL}` : ''}`);
-  }
-  return out.length ? out.join('\n\n').slice(0, 2000) : null;
-}
-
+// Chain: Serper (best, needs key) -> Wikipedia (free, factual) -> DuckDuckGo (free, instant answers).
 async function searchWeb(query) {
+  const { parseSerperResults, searchWikipedia, searchDuckDuckGo } = require('./src/ai/websearch');
   const cached = searchCache.get(query);
   if (cached && cached.expires > Date.now()) return cached.text;
+
+  function cache(text) {
+    if (text) {
+      searchCache.set(query, { text, expires: Date.now() + 10 * 60 * 1000 });
+      if (searchCache.size > 200) searchCache.clear();
+    }
+    return text;
+  }
 
   if (CONFIG.SERPER_API_KEY) {
     const run = async () => {
@@ -203,31 +230,27 @@ async function searchWeb(query) {
         signal: AbortSignal.timeout(15000),
       });
       if (!res.ok) throw new Error(`Serper ${res.status}`);
-      const data = await res.json();
-      const results = data.organic || [];
-      if (!results.length) return null;
-      return results.slice(0, 3).map(r => `**${r.title}** — ${r.snippet}\n${r.link || ''}`.trim()).join('\n\n');
+      return parseSerperResults(await res.json());
     };
 
     try {
       const text = await withRetry(run, { retries: 1, baseDelayMs: 600, timeoutMs: 20000 });
-      if (text) {
-        searchCache.set(query, { text, expires: Date.now() + 10 * 60 * 1000 });
-        if (searchCache.size > 200) searchCache.clear();
-        return text;
-      }
+      if (text) return cache(text);
     } catch (e) {
-      logger.warn('Serper failed, trying free fallback', { error: e?.message });
+      logger.warn('Serper failed, trying free fallbacks', { error: e?.message });
     }
   }
 
   try {
+    const text = await withRetry(() => searchWikipedia(query), { retries: 1, baseDelayMs: 500, timeoutMs: 15000 });
+    if (text) return cache(text);
+  } catch (e) {
+    logger.warn('Wikipedia search failed', { error: e?.message });
+  }
+
+  try {
     const text = await withRetry(() => searchDuckDuckGo(query), { retries: 1, baseDelayMs: 500, timeoutMs: 15000 });
-    if (text) {
-      searchCache.set(query, { text, expires: Date.now() + 10 * 60 * 1000 });
-      if (searchCache.size > 200) searchCache.clear();
-      return text;
-    }
+    if (text) return cache(text);
     return null;
   } catch (e) {
     logger.warn('Web search failed', { error: e?.message });
@@ -256,7 +279,7 @@ function stripBotMention(content) {
 // ---------- Chat pipeline ----------
 async function runChat({ source, channel, userPrompt, replyMode }) {
   if (!CONFIG.OPENROUTER_API_KEY) {
-    const msg = 'OpenRouter is not configured yet. Add OPENROUTER_API_KEY to your .env, then restart the bot.';
+    const msg = 'The AI is not configured yet. Please check the bot setup and try again.';
     if (replyMode.kind === 'message') await safeReplyToMessage(replyMode.message, msg);
     else await safeEditReply(replyMode.interaction, msg);
     return;
@@ -283,7 +306,7 @@ async function runChat({ source, channel, userPrompt, replyMode }) {
   }
 
   const sessionKey = getSessionKey(source);
-  lastPromptBySession.set(sessionKey, userPrompt);
+  rememberPrompt(sessionKey, userPrompt);
   const history = await historyStore.load(sessionKey);
   const sessionModel = await getSessionModel(source);
   const modelMessages = await buildModelMessages(source, history, userPrompt);
@@ -303,13 +326,14 @@ async function runChat({ source, channel, userPrompt, replyMode }) {
     } : undefined;
 
     const wrappedOnChunk = onChunk ? async (c) => { full += c; await onChunk(); } : undefined;
-    const assistantReply = await queryOpenRouter(modelMessages, sessionModel, wrappedOnChunk);
-    trackRequest(Date.now() - t0, false);
+    const log = logger.child({ session: sessionKey, command: 'chat' });
+    const { text: assistantReply, model: usedModel, usage } = await queryOpenRouter(modelMessages, sessionModel, wrappedOnChunk);
+    const ms = Date.now() - t0;
+    trackRequest(ms, false);
+    log.info('AI reply', { model: usedModel, ms, tokens: usage ? { in: usage.prompt_tokens, out: usage.completion_tokens, total: usage.total_tokens } : null });
     await historyStore.append(sessionKey, userPrompt, assistantReply);
 
-    const footer = `\n\n— *${sessionModel} · ${(Date.now() - t0) / 1000}s*`;
-    const withFooter = (assistantReply + footer).slice(0, 12000);
-    const chunks = splitCodeSafe(withFooter);
+    const chunks = splitCodeSafe(assistantReply.slice(0, 12000));
     if (replyMode.kind === 'message') {
       const first = await replyMode.message.reply({ content: chunks[0], allowedMentions: NO_PING, components: [actionRowForReply()] });
       for (let i = 1; i < chunks.length; i++) await replyMode.message.channel.send({ content: chunks[i], allowedMentions: NO_PING });
@@ -343,10 +367,8 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
   }
   if (command === 'ping') {
     const ws = Math.round(client.ws.ping);
-    const uptimeMin = Math.round((Date.now() - stats.startTime) / 60000);
-    const avg = stats.totalRequests ? Math.round(stats.totalLatencyMs / stats.totalRequests) : 0;
-    await replyEmbedOrText(replyMode, infoEmbed('🏓 Pong',
-      `WS ping: **${ws}ms**\nUptime: **${uptimeMin} min**\nRequests: **${stats.totalRequests}** (errors: ${stats.totalErrors})\nAvg LLM latency: **${avg}ms**`));
+    const pingText = Number.isFinite(ws) ? `**${ws}ms**` : 'measuring…';
+    await replyEmbedOrText(replyMode, infoEmbed('🏓 Pong', `Online · gateway ping: ${pingText}`));
     return;
   }
   if (command === 'clear') {
@@ -358,10 +380,8 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
   if (command === 'stats') {
     const model = await getSessionModel(source);
     const pers = await getSessionPersonality(source);
-    const uptimeMin = Math.round((Date.now() - stats.startTime) / 60000);
-    const avg = stats.totalRequests ? Math.round(stats.totalLatencyMs / stats.totalRequests) : 0;
-    await replyEmbedOrText(replyMode, infoEmbed('📊 Bot Stats',
-      `Uptime: **${uptimeMin} min**\nRequests: **${stats.totalRequests}** · Errors: **${stats.totalErrors}** · Avg: **${avg}ms**\nYour model: \`${model}\`\nYour personality: **${pers.name}** (\`${pers.key}\`)`));
+    await replyEmbedOrText(replyMode, infoEmbed('📊 Your Settings',
+      `Model: \`${model}\`\nPersonality: **${pers.name}** (\`${pers.key}\`)`));
     return;
   }
   if (command === 'export') {
@@ -485,11 +505,11 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
       else await safeEditReply(replyMode.interaction, msg);
       return;
     }
-    lastPromptBySession.set(sessionKey, `Code Analysis: ${prompt.slice(0, 120)}`);
+    rememberPrompt(sessionKey, `Code Analysis: ${prompt.slice(0, 120)}`);
     const stopTyping = startTypingLoop(channel);
     const t0 = Date.now();
     try {
-      const analysis = await queryOpenRouter(messages, sessionModel);
+      const { text: analysis } = await queryOpenRouter(messages, sessionModel);
       trackRequest(Date.now() - t0, false);
       await historyStore.append(sessionKey, `Code Analysis: ${prompt.slice(0, 120)}`, analysis);
       if (replyMode.kind === 'message') await safeReplyToMessage(replyMode.message, analysis);
@@ -523,18 +543,18 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
       else await safeEditReply(replyMode.interaction, msg);
       return;
     }
-    lastPromptBySession.set(sessionKey, `Research: ${prompt.slice(0, 120)}`);
+    rememberPrompt(sessionKey, `Research: ${prompt.slice(0, 120)}`);
     const stopTyping = startTypingLoop(channel);
     const t0 = Date.now();
     try {
       const web = await searchWeb(prompt);
-      const context = web ? `\n\n**Recent Search Results:**\n${web}` : '\n\n(No live web results found — answering from model knowledge. For better results add SERPER_API_KEY; a free DuckDuckGo fallback is tried automatically.)';
+      const context = web ? `\n\n**Recent Search Results:**\n${web}` : '\n\n(No live web results found — answering from model knowledge.)';
       const messages = [
         { role: 'system', content: buildSystemPrompt(researcher.prompt) },
         ...truncateHistory(history, CONFIG.MAX_HISTORY, 6000),
         { role: 'user', content: `Research this topic:\n\n${prompt}${context}` },
       ];
-      const research = await queryOpenRouter(messages, sessionModel);
+      const { text: research } = await queryOpenRouter(messages, sessionModel);
       trackRequest(Date.now() - t0, false);
       await historyStore.append(sessionKey, `Research: ${prompt}`, research);
       if (replyMode.kind === 'message') await safeReplyToMessage(replyMode.message, research);
@@ -628,29 +648,36 @@ async function handleButton(interaction) {
   if (interaction.customId === 'clear') {
     await historyStore.clear(sessionKey);
     lastPromptBySession.delete(sessionKey);
-    await interaction.reply({ embeds: [infoEmbed('🧹 Cleared', 'Conversation memory cleared.')], ephemeral: true }).catch(() => {});
+    await interaction.reply({ embeds: [infoEmbed('🧹 Cleared', 'Conversation memory cleared.')], flags: MessageFlags.Ephemeral }).catch(() => {});
     return;
   }
   if (!last) {
-    await interaction.reply({ content: 'No recent prompt to reuse. Ask something first with /ask.', ephemeral: true }).catch(() => {});
+    await interaction.reply({ content: 'No recent prompt to reuse. Ask something first with /ask.', flags: MessageFlags.Ephemeral }).catch(() => {});
+    return;
+  }
+  const source = messageProxyFromInteraction(interaction);
+  const cd = checkCooldown(source);
+  if (!cd.allowed) {
+    await interaction.reply({ content: `Slow down — try again in ${(cd.retryAfterMs / 1000).toFixed(1)}s.`, flags: MessageFlags.Ephemeral }).catch(() => {});
     return;
   }
   await interaction.deferUpdate().catch(() => {});
   const channel = interaction.channel;
-  const source = messageProxyFromInteraction(interaction);
-  const prompt = interaction.customId === 'continue' ? `${last}\n\n(Continue your previous answer.)` : last;
+  const prompt = interaction.customId === 'continue'
+    ? 'Please continue your previous response from where it stopped. Do not repeat what you already said.'
+    : last;
   const history = await historyStore.load(sessionKey);
   const sessionModel = await getSessionModel(source);
   const modelMessages = await buildModelMessages(source, history, prompt);
   const stopTyping = startTypingLoop(channel);
   try {
-    const reply = await queryOpenRouter(modelMessages, sessionModel);
+    const { text: reply } = await queryOpenRouter(modelMessages, sessionModel);
     await historyStore.append(sessionKey, prompt, reply);
     const chunks = splitCodeSafe(reply);
     await interaction.followUp({ content: chunks[0], allowedMentions: NO_PING });
     for (let i = 1; i < chunks.length; i++) await interaction.followUp({ content: chunks[i], allowedMentions: NO_PING });
   } catch (e) {
-    await interaction.followUp({ embeds: [errorEmbed((e?.message || 'Failed').slice(0, 500))], ephemeral: true }).catch(() => {});
+    await interaction.followUp({ embeds: [errorEmbed((e?.message || 'Failed').slice(0, 500))], flags: MessageFlags.Ephemeral }).catch(() => {});
   } finally {
     stopTyping();
   }
@@ -758,8 +785,8 @@ client.on(Events.InteractionCreate, async interaction => {
     logger.error('Failed to process interaction', { error: error?.message, command: interaction?.commandName });
     const text = `AI provider error: ${(error?.message || 'Failed').slice(0, 300)}`;
     try {
-      if (interaction.deferred || interaction.replied) await interaction.followUp({ content: text, ephemeral: true });
-      else await interaction.reply({ content: text, ephemeral: true });
+      if (interaction.deferred || interaction.replied) await interaction.followUp({ content: text, flags: MessageFlags.Ephemeral });
+      else await interaction.reply({ content: text, flags: MessageFlags.Ephemeral });
     } catch {}
   }
 });
@@ -777,16 +804,16 @@ async function pruneOldHistories(maxAgeDays = 30, maxFiles = 2000) {
     let removed = 0;
     const jsonFiles = entries.filter(f => f.endsWith('.json') && !['model_preferences.json', 'personality_preferences.json', 'personalities.json'].includes(f));
     const withStat = [];
-    for (const f of jsonFiles.slice(0, maxFiles + 500)) {
+    for (const f of jsonFiles) {
       try {
         const st = await fs.stat(path.join(DATA_DIR, f));
         withStat.push({ f, mtime: st.mtimeMs });
       } catch {}
     }
     withStat.sort((a, b) => a.mtime - b.mtime);
-    const overCap = withStat.length > maxFiles ? withStat.slice(0, withStat.length - maxFiles) : [];
+    const overCap = new Set(withStat.length > maxFiles ? withStat.slice(0, withStat.length - maxFiles).map(o => o.f) : []);
     for (const { f, mtime } of withStat) {
-      if (mtime < cutoff || overCap.some(o => o.f === f)) {
+      if (mtime < cutoff || overCap.has(f)) {
         try { await fs.unlink(path.join(DATA_DIR, f)); removed++; } catch {}
       }
     }
@@ -796,7 +823,21 @@ async function pruneOldHistories(maxAgeDays = 30, maxFiles = 2000) {
   }
 }
 
+function appVersion() {
+  try {
+    return require('./package.json').version || 'dev';
+  } catch {
+    return 'dev';
+  }
+}
+
 async function boot() {
+  logger.info(`Starting discord-openrouter-chatbot v${appVersion()}`, {
+    node: process.version,
+    model: CONFIG.OPENROUTER_MODEL,
+    logFormat: process.env.LOG_FORMAT || (process.env.NODE_ENV === 'production' ? 'json' : 'pretty'),
+    logFile: process.env.LOG_FILE || null,
+  });
   await ensureDir(DATA_DIR);
   await pruneOldHistories();
   await client.login(CONFIG.DISCORD_TOKEN);
@@ -809,6 +850,9 @@ async function shutdown(signal) {
   } catch (e) {
     logger.warn('Error during destroy', { error: e?.message });
   }
+  try {
+    await logger.close();
+  } catch {}
   process.exit(0);
 }
 process.on('SIGINT', () => shutdown('SIGINT'));

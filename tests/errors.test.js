@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { extractProviderErrorMessage, isRetryableError, toUserFacingProviderError } = require('../src/ai/errors');
+const { extractProviderErrorMessage, isRetryableError, isModelUnavailableError, describeProviderError, toUserFacingProviderError } = require('../src/ai/errors');
 
 test('extracts nested messages', () => {
   assert.equal(extractProviderErrorMessage({ error: { message: 'boom' } }), 'boom');
@@ -14,10 +14,39 @@ test('detects retryable', () => {
   assert.equal(isRetryableError(new Error('invalid api key')), false);
 });
 
+test('user-facing errors never expose the model id', () => {
+  const cases = [
+    new Error('insufficient credits: balance 0.001'),
+    new Error('rate limit exceeded, try again'),
+    { response: { status: 404, data: { error: { message: 'This model is unavailable for free.' } } } },
+    new Error('Provider returned error'),
+  ];
+  for (const err of cases) {
+    const msg = toUserFacingProviderError(err, 'secret-model-id-123');
+    assert.doesNotMatch(msg, /secret-model-id-123/);
+  }
+});
+
 test('user-facing hides billing internals', () => {
   const msg = toUserFacingProviderError(new Error('insufficient credits: balance 0.001'), 'm1');
   assert.match(msg, /out of credits/);
   assert.doesNotMatch(msg, /0\.001/);
+});
+
+test('detects unavailable-model errors for fallback', () => {
+  assert.equal(isModelUnavailableError({ response: { status: 404, data: { error: { message: 'This model is unavailable for free.' } } } }), true);
+  assert.equal(isModelUnavailableError(new Error('rate limit exceeded')) , false);
+});
+
+test('describe includes status for logs, never leaks keys', () => {
+  const d = describeProviderError({ status: 429, message: 'Provider returned error' });
+  assert.match(d, /status=429/);
+  assert.doesNotMatch(d, /sk-or/);
+});
+
+test('describe finds raw nested in sdk-style wrappers', () => {
+  const d = describeProviderError({ error: { error: { metadata: { raw: 'upstream says no' } } } });
+  assert.match(d, /raw=upstream says no/);
 });
 
 test('withRetry retries then succeeds', async () => {

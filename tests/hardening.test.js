@@ -6,6 +6,9 @@ test('safety guardrails appended', () => {
   const out = buildSystemPrompt('Be helpful.');
   assert.ok(out.startsWith('Be helpful.'));
   assert.ok(out.includes('@everyone') || out.includes('everyone'));
+  assert.ok(out.toLowerCase().includes('same language'), 'must carry language-match rule');
+  assert.ok(out.toLowerCase().includes('safety assessments'), 'must ban safety-preface output');
+  assert.ok(out.toLowerCase().includes('chain-of-thought'), 'must ban thought leakage');
   assert.ok(SAFETY_GUARDRAILS.length > 50);
 });
 
@@ -33,7 +36,7 @@ test('attachment type detection', () => {
 });
 
 test('safeReply splits via mocks', async () => {
-  const { safeReplyToMessage, safeEditReply } = require('../src/utils/safeReply');
+  const { safeReplyToMessage, safeEditReply, safeFollowUp } = require('../src/utils/safeReply');
   const sent = [];
   const message = {
     reply: async (d) => { sent.push({ kind: 'reply', ...d }); return {}; },
@@ -51,6 +54,23 @@ test('safeReply splits via mocks', async () => {
   };
   await safeEditReply(interaction, 'y'.repeat(4000));
   assert.ok(edits.length >= 2);
+});
+
+test('ephemeral uses flags, not deprecated option', async () => {
+  const { MessageFlags } = require('discord.js');
+  const { safeEditReply, safeFollowUp } = require('../src/utils/safeReply');
+  const calls = [];
+  const interaction = {
+    editReply: async (d) => { calls.push({ kind: 'edit', ...d }); },
+    followUp: async (d) => { calls.push({ kind: 'follow', ...d }); },
+  };
+  await safeEditReply(interaction, 'y'.repeat(4000), { ephemeralFollowUps: true });
+  const follow = calls.find(c => c.kind === 'follow');
+  assert.equal(follow.flags, MessageFlags.Ephemeral);
+  assert.ok(!('ephemeral' in follow), 'must not use deprecated ephemeral option');
+  await safeFollowUp(interaction, 'short', { ephemeral: true });
+  const last = calls[calls.length - 1];
+  assert.equal(last.flags, MessageFlags.Ephemeral);
 });
 
 test('embeds build without throw', () => {

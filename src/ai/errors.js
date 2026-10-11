@@ -19,19 +19,41 @@ function isRetryableError(error) {
   return false;
 }
 
+function isModelUnavailableError(error) {
+  const msg = extractProviderErrorMessage(error);
+  return /not found|unknown model|no route|access denied|forbidden|unauthorized|unavailable for free|paid version is available/i.test(msg);
+}
+
+// Detailed one-line summary for server logs only (never shown to users).
+function describeProviderError(error) {
+  const msg = extractProviderErrorMessage(error);
+  const status = error?.status ?? error?.statusCode ?? error?.response?.status ?? error?.code;
+  const raw =
+    error?.response?.data?.error?.metadata?.raw ||
+    error?.error?.metadata?.raw ||
+    error?.metadata?.raw ||
+    error?.error?.error?.metadata?.raw ||
+    error?.data?.error?.metadata?.raw;
+  const parts = [`msg=${msg.slice(0, 200)}`];
+  if (status !== undefined) parts.push(`status=${status}`);
+  if (raw) parts.push(`raw=${String(raw).slice(0, 200)}`);
+  return parts.join(' ');
+}
+
 function toUserFacingProviderError(error, model) {
+  void model;
   const raw = extractProviderErrorMessage(error);
   const short = raw.length > 200 ? raw.slice(0, 200) + '…' : raw;
   if (/insufficient|credit|quota|billing|payment/i.test(raw)) {
-    return `The AI provider is out of credits/quota for now. Please try again later. (model: ${model})`;
+    return 'The AI provider is out of credits/quota for now. Please try again later.';
   }
   if (/rate.?limit|too many requests/i.test(raw)) {
-    return `The AI is rate-limited right now. Please wait a few seconds and try again. (model: ${model})`;
+    return 'The AI is rate-limited right now. Please wait a few seconds and try again.';
   }
-  if (/not found|unknown model|no route|access denied|forbidden|unauthorized/i.test(raw)) {
-    return `That model is unavailable for the current API key. Try /model list and pick another. (model: ${model})`;
+  if (/not found|unknown model|no route|access denied|forbidden|unauthorized|unavailable for free|paid version/i.test(raw)) {
+    return 'That model is unavailable right now. Try /model list and pick another.';
   }
   return `AI request failed — please retry. Details: ${short}`;
 }
 
-module.exports = { extractProviderErrorMessage, isLikelyParameterCompatibilityError, isRetryableError, toUserFacingProviderError };
+module.exports = { extractProviderErrorMessage, isLikelyParameterCompatibilityError, isRetryableError, isModelUnavailableError, describeProviderError, toUserFacingProviderError };

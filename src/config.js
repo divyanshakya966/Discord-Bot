@@ -20,7 +20,7 @@ const CONFIG = {
   DISCORD_TOKEN: str('DISCORD_TOKEN', ''),
   DISCORD_CLIENT_ID: str('DISCORD_CLIENT_ID', ''),
   OPENROUTER_API_KEY: str('OPENROUTER_API_KEY', ''),
-  OPENROUTER_MODEL: str('OPENROUTER_MODEL', 'google/gemma-4-26b-a4b-it:free'),
+  OPENROUTER_MODEL: str('OPENROUTER_MODEL', 'nvidia/nemotron-3-super-120b-a12b:free'),
   OPENROUTER_BASE_URL: str('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1'),
   SYSTEM_PROMPT: str('SYSTEM_PROMPT', 'You are a helpful and concise Discord assistant. Keep answers friendly and practical.'),
   MAX_HISTORY: num('MAX_HISTORY', 8, 1, 50),

@@ -11,10 +11,18 @@ test('Girl mode exists as single canonical key', () => {
   assert.ok(prompt.includes('passion') || prompt.includes('affection') || prompt.includes('devoted'), 'should be passionate by default');
 });
 
+test('Girl mode locks language and character', () => {
+  const prompt = DEFAULT_PERSONALITIES.girl.prompt.toLowerCase();
+  assert.ok(prompt.includes('same language'), 'must match user language');
+  assert.ok(prompt.includes('never break character'), 'must stay in character');
+  assert.ok(prompt.includes('single chat message'), 'must fit in one message');
+});
+
 test('Girl mode has tasteful boundary', () => {
   const prompt = DEFAULT_PERSONALITIES.girl.prompt.toLowerCase();
-  assert.ok(prompt.includes('non-explicit') || prompt.includes('pg-13') || prompt.includes('tasteful'), 'must stay tasteful');
-  assert.ok(prompt.includes('decline') || prompt.includes('instead'), 'must decline explicit requests');
+  assert.ok(prompt.includes('tasteful') || prompt.includes('never explicit'), 'must stay tasteful');
+  assert.ok(prompt.includes('deflect'), 'must deflect in character, never lecture');
+  assert.ok(!prompt.includes('as an ai'), 'must not break character with AI self-reference');
 });
 
 test('legacy aliases resolve to same Girl prompt', () => {
@@ -36,11 +44,11 @@ test('personality list hides aliases, shows Girl once', () => {
   assert.equal(girlKeyCount, 1);
 });
 
-test('default model is free-tier', () => {
+test('default model is pinned to verified non-reasoning free model', () => {
   // Unset env-driven default check: config module default literal
   const fs = require('node:fs');
   const src = fs.readFileSync(__dirname + '/../src/config.js', 'utf-8');
-  assert.ok(src.includes('google/gemma-4-26b-a4b-it:free'), 'default model should be free Gemma');
+  assert.ok(src.includes("'nvidia/nemotron-3-super-120b-a12b:free'"), 'default model should be verified Nemotron free');
 });
 
 test('retired model IDs migrate to live replacements', () => {

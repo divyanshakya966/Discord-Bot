@@ -18,10 +18,10 @@ A Discord chatbot built with Discord.js and the official OpenRouter SDK — now 
 
 ### Basic
 - `/help` - Embed with all commands
-- `/ping` - WS ping, uptime, request/error counts, avg LLM latency
+- `/ping` - Health check (gateway ping)
 - `/clear` - Clear your memory for this server/DM
 - `/ask question:<question>` - Ask the AI (progressive edits for long answers)
-- `/stats` - Usage stats + your current model/personality
+- `/stats` - Your current model/personality
 - `/export [format:json|md]` - Export history (JSON file or Markdown)
 
 ### Model & Personality (per-user, autocomplete)
@@ -30,12 +30,12 @@ A Discord chatbot built with Discord.js and the official OpenRouter SDK — now 
 - `/model current` - Show current model
 - `/personality list` / `/personality set name:<name>` / `/personality current`
 
-**Models:** Gemma 4 26B (Free, default — zero cost), Auto Free Router, Llama 3.1 70B, Mistral Large, GPT-4 Turbo, Claude 3.5 Sonnet (+ legacy MythoMax for old prefs).
+**Models:** Nemotron 3 Super (Free, default — zero cost), Auto Free Router, Gemma 4 26B (Free), Llama 3.1 70B, Mistral Large, GPT-4 Turbo, Claude 3.5 Sonnet (+ legacy MythoMax for old prefs). If your model dies, the bot auto-falls-back to the default once.
 **Personalities:** Standard, Code Analyzer, Researcher, Creative, Tutor, **Girl** (`girl` — loving, playfully seductive, tasteful PG-13 by default).
 
 ### Specialized
 - `/code code:<code>` - Expert code review (max 6000 chars by default; text-file attachments also read)
-- `/research query:<query>` - Web search + AI synthesis (Serper if configured, else free DuckDuckGo fallback, 10-min cache)
+- `/research query:<query>` - Web search + AI synthesis (Serper if configured, else free Wikipedia → DuckDuckGo fallbacks, 10-min cache)
 
 You can also mention the bot, or reply directly to one of its messages to continue.
 
@@ -71,7 +71,7 @@ node --version  # want >= 18, ideally 22
 npm install
 cp .env.example .env
 # fill DISCORD_TOKEN, DISCORD_CLIENT_ID, OPENROUTER_API_KEY
-# OPENROUTER_MODEL defaults to google/gemma-4-26b-a4b-it:free (free)
+# OPENROUTER_MODEL defaults to nvidia/nemotron-3-super-120b-a12b:free (verified free)
 npm run deploy-commands
 npm test
 
@@ -89,7 +89,7 @@ Cost-saving defaults for local use: free default model, DuckDuckGo fallback (no 
 
 ## Environment Variables
 
-Required: `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` (e.g. `google/gemma-4-26b-a4b-it:free`).
+Required: `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` (e.g. `nvidia/nemotron-3-super-120b-a12b:free`).
 
 Optional: `OPENROUTER_BASE_URL`, `SYSTEM_PROMPT` (overrides Standard personality), `MAX_HISTORY` (8), `MAX_TOKENS` (1000), `TEMPERATURE` (0.85), `TOP_P`, `FREQUENCY_PENALTY`, `PRESENCE_PENALTY`, `SERPER_API_KEY`.
 
@@ -98,13 +98,16 @@ Safety tuning: `MAX_PROMPT_CHARS` (4000), `MAX_CODE_CHARS` (6000), `COOLDOWN_MS`
 ## Testing & Ops
 
 ```bash
-npm test          # node --test tests/ (38 automated checks)
+npm test          # node --test tests/*.test.js (56 automated checks)
 npm run check     # syntax check
 ```
 - CI (`.github/workflows/ci.yml`): install, syntax check, tests, `npm audit`.
 - Docker (optional, not needed locally): `docker build -t discord-bot . && docker run --env-file .env -v ./data:/app/data discord-bot`
 - Fedora service: `systemd/discord-bot.service` + `npm run service:*` scripts above.
-- Logs are JSON lines with redacted secrets. Health via `/ping` + `/stats`.
+- Logs are redacted (keys/tokens scrubbed even inside message strings) and never include prompt or reply text. Health via `/ping` + `/stats`.
+- `LOG_FORMAT=pretty|json` (default pretty locally, json when `NODE_ENV=production`), `LOG_LEVEL=debug|info|warn|error`.
+- `LOG_FILE=./data/bot.log` enables file logging with rotation (`LOG_MAX_BYTES`, default 5MB; `LOG_MAX_FILES`, default 5 keeps `bot.log.1…5`).
+- Every AI reply logs one correlated line: session, model, latency ms, and prompt/completion/total tokens for cost tracking.
 
 ## Data Storage
 
@@ -121,7 +124,7 @@ npm run check     # syntax check
 
 - **Bot doesn't respond:** check it is in the server, Message Content intent is on, `DISCORD_TOKEN` is valid, and `npm run deploy-commands` was run after command changes.
 - **Slash commands missing:** global commands take minutes to propagate; for instant testing set `DISCORD_GUILD_ID` and redeploy.
-- **Model errors / quota:** try `/model list` and pick another model; free default is `google/gemma-4-26b-a4b-it:free`.
+- **Model errors / quota:** try `/model list` and pick another model; dead models auto-fall-back to the free default once. Free default is Nemotron 3 Super.
 - **Research has no web results:** add `SERPER_API_KEY`, otherwise the free DuckDuckGo fallback applies automatically.
 - **Service won't start (Fedora):** run `journalctl --user -u discord-bot -n 50` and verify `.env` values.
 

@@ -1,5 +1,19 @@
 # Changelog - Premium Features Release
 
+## Version 2.3.2 - Verified free models + auto-fallback
+
+- Live-probed OpenRouter with the real key: `openrouter/free` (200, routes to a live free model) and `nvidia/nemotron-3-super-120b-a12b:free` (200) verified working; Gemma 3/GPT-OSS/GLM free slugs return 404 (retired), Gemma 4 free exists but was upstream-429 at probe time.
+- Default model pinned to `nvidia/nemotron-3-super-120b-a12b:free` (verified live: follows personas, keeps thinking out of `content`, fast). The `openrouter/free` router stays available but can hand out reasoning models that leak chain-of-thought into replies — new guardrail bans thought/meta leakage, and Girl replies are constrained to a single short message so long rambles can't span 3 messages.
+- `queryOpenRouter` now returns `{ text, model }` and retries once against the default model when the session model is unavailable (404/no-route/no-access); the reply footer shows the model that actually answered. Failure logs now include provider status + raw snippet via `describeProviderError`.
+- Girl prompt locked: always matches the user's language, never breaks character into a generic assistant (single `GIRL_PROMPT` shared by all aliases); global language-match guardrail for all modes.
+- Privacy: chat replies no longer carry a model/latency footer; `/ping` and `/stats` no longer expose uptime, request/error counts, or latency; provider errors and setup hints no longer name models, keys, or env files (details stay in server logs).
+- ▶ Continue button now sends a pure resume instruction instead of re-asking the original question, so it continues the same answer rather than regenerating a different-feeling one.
+- Girl prompt reworked for a freer feel: bolder flirtation and suggestive playfulness, in-character deflection instead of lectures, never mentions policies (verified live on all three probe types); explicit sexual description stays out by design.
+- Replies can no longer leak "User Safety: safe" style prefaces — guardrail bans safety assessments, verdicts, and internal reasoning from outputs.
+- Research retrieval upgraded: free chain is now Serper → Wikipedia → DuckDuckGo (verified live: Wikipedia returns sourced snippets+links where DDG returns nothing); parsers extracted to testable `src/ai/websearch.js`.
+- Industrial logging: pretty (local) / JSON (production) formats, optional rotating file transport (`LOG_FILE`, size-capped with numbered backups), child loggers carrying session+command on every line, secret scrubbing inside message strings (fixed: plural `tokens` usage objects no longer redacted), boot banner with version/node/model, log flush on shutdown. Every AI reply logs one line with model, latency, and prompt/completion/total tokens — prompt and reply text are never logged.
+- Reliability sweep: Retry/Continue buttons now respect cooldowns (spam-proof); `lastPromptBySession` capped at 1000 entries (no unbounded growth); history prune scans all files instead of a 2500-file window; `/ping` handles pre-ready NaN; failure logs dig deeper SDK shapes for the raw provider message.
+
 ## Version 2.3.1 - Fix retired free model
 
 - OpenRouter retired `google/gemma-3-27b-it:free` (paid-only now). Default and list moved to live `google/gemma-4-26b-a4b-it:free`, plus an `openrouter/free` Auto router option.
