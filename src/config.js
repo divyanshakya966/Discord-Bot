@@ -16,6 +16,12 @@ function str(name, def) {
   return raw;
 }
 
+function idList(name) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return [];
+  return raw.split(/[,\s]+/).map(v => v.trim()).filter(v => /^\d{5,25}$/.test(v));
+}
+
 const CONFIG = {
   DISCORD_TOKEN: str('DISCORD_TOKEN', ''),
   DISCORD_CLIENT_ID: str('DISCORD_CLIENT_ID', ''),
@@ -36,6 +42,7 @@ const CONFIG = {
   LLM_TIMEOUT_MS: num('LLM_TIMEOUT_MS', 60000, 5000, 300000),
   LLM_MAX_RETRIES: num('LLM_MAX_RETRIES', 2, 0, 5),
   DATA_DIR: str('DATA_DIR', ''),
+  BOT_OWNER_IDS: idList('BOT_OWNER_IDS'),
 };
 
 function validateConfig(cfg = CONFIG) {

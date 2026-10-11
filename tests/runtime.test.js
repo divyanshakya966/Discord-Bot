@@ -535,6 +535,36 @@ test('slash group status works', async () => {
   assert.ok(edit.embeds?.length === 1);
 });
 
+test('bot owner bypasses Manage Channels for group control', async () => {
+  assert.equal(bot.isBotOwner('owner1'), false);
+  const saved = CONFIG.BOT_OWNER_IDS;
+  CONFIG.BOT_OWNER_IDS = ['owner1'];
+  try {
+    assert.equal(bot.isBotOwner('owner1'), true);
+    assert.equal(bot.isBotOwner('u-random'), false);
+    assert.equal(bot.isBotOwner(null), false);
+
+    const ch = 'ch-gowner';
+    const on = guildMessage('owner1', ch, false);
+    await bot.handleCommand(guildSrc('owner1', ch), chan(), 'group', 'on', mode(on.message));
+    assert.match(firstReply(on.sent).embeds[0].toJSON().title, /Group Mode ON/);
+    assert.equal(await bot.isGroupChannel(ch), true);
+
+    const slash = slashInteraction({ command: 'group', subcommand: 'clear', uid: 'owner1', options: {} });
+    slash.interaction.guildId = 'g1';
+    slash.interaction.channelId = ch;
+    await bot.handleSlashCommand(slash.interaction);
+    const edit = slash.calls.find(c => c.kind === 'editReply');
+    assert.match(edit.embeds[0].toJSON().title, /Cleared/);
+
+    const off = guildMessage('owner1', ch, false);
+    await bot.handleCommand(guildSrc('owner1', ch), chan(), 'group', 'off', mode(off.message));
+    assert.equal(await bot.isGroupChannel(ch), false);
+  } finally {
+    CONFIG.BOT_OWNER_IDS = saved;
+  }
+});
+
 test('author tags prefer server display names and neutralize forgeries', async () => {
   assert.equal(bot.resolveAuthorTag({ member: { displayName: 'Ally' }, author: { id: 'u1', username: 'alice99' } }), 'Ally');
   assert.equal(bot.resolveAuthorTag({ author: { id: 'u1', username: 'alice99' } }), 'alice99');

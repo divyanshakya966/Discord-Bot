@@ -33,7 +33,7 @@ A Discord chatbot built with Discord.js and the official OpenRouter SDK — now 
 - `/personality list` / `/personality set name:<name>` / `/personality current`
 
 ### Group discussion (shared memory per channel)
-- `/group on` - Remember everyone's messages in this channel (needs Manage Channels)
+- `/group on` - Remember everyone's messages in this channel (needs Manage Channels, or bot owner via `BOT_OWNER_IDS`)
 - `/group status` - Show mode + saved message count · `/group off` · `/group clear` (wipe shared history, mods only)
 
 **How it works:** in a group channel the bot silently records discussion (tagged by each member's server display name) and answers mentions/replies/`/ask` from the shared history (one `group_<channel>.json` file). Model, personality, cooldowns and Retry memory stay per-user; `/clear` and `/export` stay personal. Retry/Continue/Clear buttons always act on the clicker's own session — nobody can trigger them on another user's behalf.

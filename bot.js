@@ -140,7 +140,13 @@ async function resolveHistoryKey(source) {
   return personal;
 }
 
+function isBotOwner(userId) {
+  return !!userId && (CONFIG.BOT_OWNER_IDS || []).includes(String(userId));
+}
+
 function canManageGroup(replyMode) {
+  const uid = replyMode.kind === 'message' ? replyMode.message.author?.id : replyMode.interaction.user?.id;
+  if (isBotOwner(uid)) return true;
   if (replyMode.kind === 'message') {
     return !!replyMode.message.member?.permissions?.has?.(PermissionsBitField.Flags.ManageChannels);
   }
@@ -1046,4 +1052,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { client, handleCommand, handleButton, handleSlashCommand, handleAutocomplete, runChat, getSessionModel, getSessionPersonality, queryOpenRouter, sendPagedAIReply, sendPagedFollowUp, getEffectiveMaxTokens, lastPromptBySession, pruneOldHistories, resolveReplyTarget, isGroupChannel, setGroupChannel, getGroupHistoryKey, resolveHistoryKey, resolveAuthorTag, CONTINUE_PROMPT, MAX_AUTO_CONTINUATIONS, AUTO_CONTINUE_CHAR_BUDGET };
+module.exports = { client, handleCommand, handleButton, handleSlashCommand, handleAutocomplete, runChat, getSessionModel, getSessionPersonality, queryOpenRouter, sendPagedAIReply, sendPagedFollowUp, getEffectiveMaxTokens, lastPromptBySession, pruneOldHistories, resolveReplyTarget, isGroupChannel, setGroupChannel, getGroupHistoryKey, resolveHistoryKey, resolveAuthorTag, isBotOwner, CONTINUE_PROMPT, MAX_AUTO_CONTINUATIONS, AUTO_CONTINUE_CHAR_BUDGET };
