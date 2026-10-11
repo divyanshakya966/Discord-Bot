@@ -6,7 +6,7 @@ function getMissingPermissions(channel, clientUser) {
     const me = channel.guild?.members?.me;
     const permsIn = channel.permissionsFor?.(me || clientUser);
     if (!permsIn) return [];
-    const need = [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.EmbedLinks];
+    const need = [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.EmbedLinks, PermissionsBitField.Flags.ReadMessageHistory];
     const missing = need.filter(f => !permsIn.has(f));
     return missing.map(f => String(f));
   } catch {
@@ -16,7 +16,7 @@ function getMissingPermissions(channel, clientUser) {
 
 function missingToUserText(missing) {
   if (!missing?.length) return '';
-  return 'I seem to be missing permissions here (needs View Channel, Send Messages, Embed Links). Please ask a moderator to check my role/channel overrides.';
+  return 'I seem to be missing permissions here (needs View Channel, Send Messages, Embed Links, Read Message History). Please ask a moderator to check my role/channel overrides.';
 }
 
 module.exports = { getMissingPermissions, missingToUserText };

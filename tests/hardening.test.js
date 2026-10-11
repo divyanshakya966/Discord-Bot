@@ -17,15 +17,16 @@ test('permission check passes in DM, detects missing in guild', () => {
   assert.deepEqual(getMissingPermissions({ isDMBased: () => true }), []);
   // Mock channel without permissionsFor -> [] (fail-open, never crash)
   assert.deepEqual(getMissingPermissions({ isDMBased: () => false }), []);
-  // Mock with EmbedLinks missing
+  // Mock with EmbedLinks + ReadMessageHistory missing
   const { PermissionsBitField } = require('discord.js');
   const fake = {
     isDMBased: () => false,
     guild: { members: { me: {} } },
-    permissionsFor: () => ({ has: (f) => f !== PermissionsBitField.Flags.EmbedLinks }),
+    permissionsFor: () => ({ has: (f) => f !== PermissionsBitField.Flags.EmbedLinks && f !== PermissionsBitField.Flags.ReadMessageHistory }),
   };
   const missing = getMissingPermissions(fake, {});
-  assert.equal(missing.length, 1);
+  assert.equal(missing.length, 2);
+  assert.ok(missing.includes(String(PermissionsBitField.Flags.ReadMessageHistory)));
 });
 
 test('attachment type detection', () => {

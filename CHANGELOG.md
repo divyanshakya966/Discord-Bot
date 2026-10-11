@@ -1,6 +1,6 @@
 # Changelog - Premium Features Release
 
-## Unreleased - Paged replies, Discord-safe markdown, complete outputs
+## Version 2.4.0 - Paged replies, Discord-safe markdown, complete outputs
 
 - Long AI answers now arrive as ONE paged message with ◀ Prev / Next ▶ buttons (`src/discord/pagination.js`, 30-min sessions) instead of N follow-up messages flooding the channel; `/code`, `/research`, Retry/Continue, and `/export md` all page the same way.
 - Discord-safe markdown everywhere: new `src/utils/discordMarkdown.js` rewrites tables → bullets, `# heads` → bold, task/footnote/LaTeX/HTML/reference syntax into supported forms (code fences and `||spoilers||` preserved), enforced by a strict system-prompt rule plus idempotent sanitizing in `safeReply.js`.
@@ -10,6 +10,7 @@
 - Bounds + wiring: history memory cache capped (reloads evicted sessions from disk), mutex chains evicted, unknown slash commands answer instead of hanging deferred, slash definitions contract-tested against handlers, syntax check covers every file.
 - Live-log fixes: token usage normalized across provider shapes and summed over continuations (`tokens={}` → real totals or honest `null`); shutdown guarded against duplicate SIGINT; navigation footer line removed (pager `1/5` counter already shows position, index now read from it).
 - Code formatting: unclosed fences auto-closed (truncated code survives verbatim), lone stray fences removed, `<pre>` blocks and multi-line inline code upgraded to fenced blocks, nested demo fences protected.
+- Reply-to-bot fixed: replies were silently ignored without Read Message History (fetch failed, no fallback). Now resolves via fetch-free `repliedUser` first, falls back to fetch, and names the missing permission instead of staying silent; permission is now required and documented.
 - Ops note: `commands.js` descriptions changed (`/ping`, `/stats`, `/export`) — run `npm run deploy-commands` and restart.
 
 ## Version 2.3.2 - Verified free models + auto-fallback

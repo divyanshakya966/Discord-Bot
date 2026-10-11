@@ -53,7 +53,7 @@ function guildWelcomeEmbed() {
   return baseEmbed('👋 Thanks for adding me!',
     'I answer DMs directly, and in servers when mentioned or via slash commands.\n\n' +
     '**Start here:** `/help` · `/ask question:<…>` · `/model list` · `/personality list`\n\n' +
-    'I need **View Channel, Send Messages, Embed Links** to work. Message Content intent must be on in the Developer Portal for mention replies.'
+    'I need **View Channel, Send Messages, Embed Links, Read Message History** to work (the last one lets me see replies to my messages). Message Content intent must be on in the Developer Portal for mention replies.'
   );
 }
 

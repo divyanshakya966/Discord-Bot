@@ -1,6 +1,6 @@
 {
   "name": "discord-openrouter-chatbot",
-  "version": "2.3.2",
+  "version": "2.4.0",
   "description": "Discord chatbot powered by OpenRouter-compatible models with slash-command UX",
   "main": "bot.js",
   "scripts": {

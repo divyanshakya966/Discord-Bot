@@ -318,8 +318,7 @@ test('autocomplete responds for model and personality, silent otherwise', async 
   assert.ok(!x.calls.some(c => c.kind === 'respond'));
 });
 
-test('slash definitions match what the handlers read', async () => {
-  const { slashCommands } = require('../commands.js');
+test('slash definitions match what the handlers read', async () => {  const { slashCommands } = require('../commands.js');
   const byName = Object.fromEntries(slashCommands.map(c => [c.name, c]));
   const opt = (cmd, name) => (byName[cmd].options || []).find(o => o.name === name);
 
@@ -337,4 +336,79 @@ test('slash definitions match what the handlers read', async () => {
   assert.ok(modelSet.options.some(o => o.name === 'model' && o.autocomplete));
   const persSet = byName.personality.options.find(o => o.name === 'set');
   assert.ok(persSet.options.some(o => o.name === 'name' && o.autocomplete));
+});
+
+test('reply target resolves without fetch when repliedUser is the bot', async () => {
+  let fetched = false;
+  const message = {
+    reference: { messageId: 'm1' },
+    mentions: { repliedUser: { id: 'bot123' } },
+    channel: { messages: { fetch: async () => { fetched = true; return null; } } },
+  };
+  const r = await bot.resolveReplyTarget(message, { id: 'bot123' });
+  assert.deepEqual(r, { replyToBot: true, fetchFailed: false });
+  assert.equal(fetched, false);
+});
+
+test('reply target falls back to fetch, reports failure distinctly', async () => {
+  const botUser = { id: 'bot123' };
+  const hit = await bot.resolveReplyTarget({
+    reference: { messageId: 'm1' },
+    mentions: {},
+    channel: { messages: { fetch: async () => ({ author: { id: 'bot123' } }) } },
+  }, botUser);
+  assert.deepEqual(hit, { replyToBot: true, fetchFailed: false });
+
+  const miss = await bot.resolveReplyTarget({
+    reference: { messageId: 'm1' },
+    mentions: {},
+    channel: { messages: { fetch: async () => ({ author: { id: 'someone' } }) } },
+  }, botUser);
+  assert.deepEqual(miss, { replyToBot: false, fetchFailed: false });
+
+  const failed = await bot.resolveReplyTarget({
+    reference: { messageId: 'm1' },
+    mentions: {},
+    channel: { messages: { fetch: async () => { throw new Error('Missing Access'); } } },
+  }, botUser);
+  assert.deepEqual(failed, { replyToBot: false, fetchFailed: true });
+
+  assert.deepEqual(await bot.resolveReplyTarget({ content: 'hi' }, botUser), { replyToBot: false, fetchFailed: false });
+});
+
+test('guild reply without read-history permission gets a perm notice, not silence', async () => {
+  const { PermissionsBitField } = require('discord.js');
+  const replies = [];
+  const fake = {
+    author: { id: 'u-reply', bot: false },
+    content: 'what do you think?',
+    reference: { messageId: 'botmsg1' },
+    mentions: { repliedUser: null, has: () => false },
+    attachments: new Map(),
+    channel: {
+      isDMBased: () => false,
+      messages: { fetch: async () => { throw new Error('Missing Access'); } },
+      permissionsFor: () => ({ has: (f) => f !== PermissionsBitField.Flags.ReadMessageHistory }),
+    },
+    reply: async (d) => { replies.push(d); return {}; },
+  };
+  const savedUser = bot.client.user;
+  bot.client.user = { id: 'bot123' };
+  try {
+    bot.client.emit('messageCreate', fake);
+    await new Promise(r => setTimeout(r, 300));
+  } finally {
+    bot.client.user = savedUser;
+  }
+  assert.ok(replies.some(d => /Read Message History/.test(d.content || '')), `got ${JSON.stringify(replies)}`);
+});
+
+test('command triad complete: slash defs = routing keys, help lists all', async () => {
+  const { slashCommands } = require('../commands.js');
+  const { KNOWN } = require('../src/discord/routing.js');
+  assert.deepEqual(slashCommands.map(c => c.name).sort(), [...KNOWN].sort());
+
+  const { helpEmbed } = require('../src/discord/embeds.js');
+  const text = JSON.stringify(helpEmbed('/').toJSON());
+  for (const cmd of KNOWN) assert.ok(text.includes(cmd), `help must mention ${cmd}`);
 });

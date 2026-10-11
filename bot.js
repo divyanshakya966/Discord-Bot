@@ -322,6 +322,22 @@ function stripBotMention(content) {
   return content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
 }
 
+// Is this message a reply to the bot? Prefers the fetch-free repliedUser
+// from the gateway payload, falls back to fetching the referenced message
+// (needs Read Message History). Returns { replyToBot, fetchFailed } so the
+// caller can tell "not our message" apart from "couldn't check".
+async function resolveReplyTarget(message, clientUser) {
+  if (!message.reference?.messageId || !clientUser) return { replyToBot: false, fetchFailed: false };
+  if (message.mentions?.repliedUser?.id === clientUser.id) return { replyToBot: true, fetchFailed: false };
+  try {
+    const ref = await message.channel.messages.fetch(message.reference.messageId);
+    return { replyToBot: ref?.author?.id === clientUser.id, fetchFailed: false };
+  } catch (err) {
+    logger.warn('Failed to fetch referenced message', { error: err?.message });
+    return { replyToBot: false, fetchFailed: true };
+  }
+}
+
 // ---------- Chat pipeline ----------
 async function runChat({ source, channel, userPrompt, replyMode }) {
   if (!CONFIG.OPENROUTER_API_KEY) {
@@ -747,31 +763,34 @@ client.on(Events.MessageCreate, async message => {
     }
 
     if (message.reference?.messageId) {
-      try {
-        const ref = await message.channel.messages.fetch(message.reference.messageId);
-        if (ref?.author?.id === client.user.id) {
-          let prompt = message.content?.trim() || '';
-          if (!prompt && message.attachments?.size) {
-            const ctx = await collectAttachmentContext(message, '(user sent attachments, no text)');
-            prompt = ctx.prompt;
-          }
-          if (!prompt) return;
-          const missing = getMissingPermissions(message.channel, client.user);
-          if (missing.length) {
-            await message.reply({ content: missingToUserText(missing), allowedMentions: NO_PING }).catch(() => {});
-            return;
-          }
-          const routed = parseMentionCommand(prompt);
-          if (routed) {
-            await handleCommand(message, message.channel, routed.command, routed.prompt, { kind: 'message', message });
-            return;
-          }
-          const withAtt = (await collectAttachmentContext(message, prompt)).prompt;
-          await runChat({ source: message, channel: message.channel, userPrompt: withAtt, replyMode: { kind: 'message', message } });
+      const { replyToBot, fetchFailed } = await resolveReplyTarget(message, client.user);
+      if (replyToBot) {
+        let prompt = message.content?.trim() || '';
+        if (!prompt && message.attachments?.size) {
+          const ctx = await collectAttachmentContext(message, '(user sent attachments, no text)');
+          prompt = ctx.prompt;
+        }
+        if (!prompt) return;
+        const missing = getMissingPermissions(message.channel, client.user);
+        if (missing.length) {
+          await message.reply({ content: missingToUserText(missing), allowedMentions: NO_PING }).catch(() => {});
           return;
         }
-      } catch (err) {
-        logger.warn('Failed to fetch referenced message', { error: err?.message });
+        const routed = parseMentionCommand(prompt);
+        if (routed) {
+          await handleCommand(message, message.channel, routed.command, routed.prompt, { kind: 'message', message });
+          return;
+        }
+        const withAtt = (await collectAttachmentContext(message, prompt)).prompt;
+        await runChat({ source: message, channel: message.channel, userPrompt: withAtt, replyMode: { kind: 'message', message } });
+        return;
+      }
+      if (fetchFailed && !message.channel.isDMBased?.()) {
+        const missing = getMissingPermissions(message.channel, client.user);
+        if (missing.length) {
+          await message.reply({ content: missingToUserText(missing), allowedMentions: NO_PING }).catch(() => {});
+          return;
+        }
       }
     }
     if (!shouldRespond(message)) return;
@@ -913,4 +932,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { client, handleCommand, handleButton, handleSlashCommand, handleAutocomplete, runChat, getSessionModel, getSessionPersonality, queryOpenRouter, sendPagedAIReply, sendPagedFollowUp, getEffectiveMaxTokens, lastPromptBySession, pruneOldHistories, CONTINUE_PROMPT, MAX_AUTO_CONTINUATIONS, AUTO_CONTINUE_CHAR_BUDGET };
+module.exports = { client, handleCommand, handleButton, handleSlashCommand, handleAutocomplete, runChat, getSessionModel, getSessionPersonality, queryOpenRouter, sendPagedAIReply, sendPagedFollowUp, getEffectiveMaxTokens, lastPromptBySession, pruneOldHistories, resolveReplyTarget, CONTINUE_PROMPT, MAX_AUTO_CONTINUATIONS, AUTO_CONTINUE_CHAR_BUDGET };
