@@ -284,6 +284,23 @@ test('unknown slash command answers instead of hanging deferred', async () => {
   assert.match(edit.content, /Unknown command/);
 });
 
+test('prune removes stale histories, tmp orphans, and over-cap files', async () => {
+  const fs = require('fs/promises');
+  const dir = process.env.DATA_DIR;
+  await fs.writeFile(path.join(dir, 'old_session.json'), '{}');
+  const old = new Date(Date.now() - 40 * 24 * 3600 * 1000);
+  await fs.utimes(path.join(dir, 'old_session.json'), old, old);
+  await fs.writeFile(path.join(dir, 'fresh_session.json'), '[]');
+  await fs.writeFile(path.join(dir, 'crash.123.abcd.tmp'), 'partial');
+  await fs.writeFile(path.join(dir, 'model_preferences.json'), '{}');
+  await bot.pruneOldHistories(30, 2000, dir);
+  const left = await fs.readdir(dir);
+  assert.ok(!left.includes('old_session.json'), 'stale history removed');
+  assert.ok(!left.includes('crash.123.abcd.tmp'), 'tmp orphan removed');
+  assert.ok(left.includes('fresh_session.json'), 'fresh history kept');
+  assert.ok(left.includes('model_preferences.json'), 'prefs never pruned');
+});
+
 test('autocomplete responds for model and personality, silent otherwise', async () => {
   const m = slashInteraction({ command: 'model', options: { focusedName: 'model', focusedValue: '' } });
   await bot.handleAutocomplete(m.interaction);

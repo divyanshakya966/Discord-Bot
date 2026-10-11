@@ -2,6 +2,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   isLengthTruncated,
+  normalizeUsage,
+  mergeUsage,
   collectStreamText,
   completeWithAutoContinue,
   CONTINUE_PROMPT,
@@ -13,6 +15,40 @@ function streamOf(chunks) {
     for (const c of chunks) yield c;
   })();
 }
+
+test('normalizeUsage tolerates empty and variant shapes', () => {
+  assert.equal(normalizeUsage(null), null);
+  assert.equal(normalizeUsage({}), null);
+  assert.deepEqual(
+    normalizeUsage({ prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 }),
+    { in: 10, out: 20, total: 30 }
+  );
+  assert.deepEqual(
+    normalizeUsage({ input_tokens: 5, output_tokens: 7 }),
+    { in: 5, out: 7, total: 12 }
+  );
+});
+
+test('normalizeUsage is idempotent on merged output', () => {
+  const merged = mergeUsage(
+    { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
+    { prompt_tokens: 120, completion_tokens: 5, total_tokens: 125 }
+  );
+  assert.deepEqual(merged, { in: 220, out: 15, total: 235 });
+  assert.deepEqual(normalizeUsage(merged), merged);
+});
+
+test('mergeUsage sums stitched calls instead of keeping {}', () => {
+  assert.deepEqual(
+    mergeUsage({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }, {}),
+    { in: 10, out: 5, total: 15 }
+  );
+  assert.deepEqual(
+    mergeUsage({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }, { prompt_tokens: 20, completion_tokens: 3, total_tokens: 23 }),
+    { in: 30, out: 8, total: 38 }
+  );
+  assert.equal(mergeUsage(null, null), null);
+});
 
 test('isLengthTruncated only matches length', () => {
   assert.equal(isLengthTruncated('length'), true);

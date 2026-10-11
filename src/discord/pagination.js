@@ -58,9 +58,27 @@ function getPagedSession(id) {
 }
 
 function buildPageContent(pages, index) {
-  const page = pages[index] ?? '';
-  if (pages.length <= 1) return page;
-  return `${page}\n\n📄 Page ${index + 1}/${pages.length}  •  Use ◀ ▶ to navigate`;
+  return pages[index] ?? '';
+}
+
+function indexFromCounterButton(message, total) {
+  try {
+    const rows = message?.components || [];
+    for (const row of rows) {
+      const buttons = row?.components || row?.data?.components || [];
+      for (const b of buttons) {
+        const id = b?.customId ?? b?.custom_id ?? b?.data?.custom_id ?? '';
+        if (!String(id).startsWith('pg:noop:')) continue;
+        const label = b?.label ?? b?.data?.label ?? '';
+        const m = /^(\d+)\s*\/\s*(\d+)$/.exec(String(label).trim());
+        if (!m) return null;
+        const idx = parseInt(m[1], 10) - 1;
+        if (Number.isFinite(idx) && idx >= 0 && idx < total) return idx;
+        return null;
+      }
+    }
+  } catch { /* fall through to cursor */ }
+  return null;
 }
 
 function paginationRow(paginatorId, index, total) {
@@ -114,12 +132,10 @@ async function handlePaginationButton(interaction) {
     return true;
   }
 
+  // Position comes from the visible counter button; the cursor is the fallback.
   let index = typeof session.cursor === 'number' ? session.cursor : 0;
-  const m = /Page\s+(\d+)\s*\/\s*(\d+)/i.exec(interaction.message?.content || '');
-  if (m) {
-    const parsed = parseInt(m[1], 10) - 1;
-    if (Number.isFinite(parsed) && parsed >= 0 && parsed < session.pages.length) index = parsed;
-  }
+  const fromButtons = indexFromCounterButton(interaction.message, session.pages.length);
+  if (fromButtons !== null) index = fromButtons;
   if (action === 'prev') index = Math.max(0, index - 1);
   else index = Math.min(session.pages.length - 1, index + 1);
   session.cursor = index;
@@ -159,6 +175,7 @@ module.exports = {
   createPagedSession,
   getPagedSession,
   buildPageContent,
+  indexFromCounterButton,
   paginationRow,
   isPaginationButton,
   handlePaginationButton,

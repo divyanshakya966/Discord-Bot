@@ -78,6 +78,17 @@ function sanitizeOutsideCode(segment) {
   let s = segment;
 
   s = s.replace(/<!--[\s\S]*?-->/g, '');
+
+  // Shield spoilers, inline code and freshly fenced blocks (they use | and `).
+  const protectedSpans = [];
+  const protect = (match) => {
+    protectedSpans.push(match);
+    return `\0SPAN${protectedSpans.length - 1}\0`;
+  };
+  // <pre> code would be tag-stripped into bare text — fence it first.
+  s = s.replace(/<pre[^>]*>([\s\S]*?)<\/pre\s*>/gi, (_, inner) =>
+    protect(`\`\`\`\n${decodeHtmlEntities(inner.replace(/<[^>]*>/g, '')).trim()}\n\`\`\``));
+
   s = s.replace(/<(https?:\/\/[^<>\s]+)>/g, '$1');
 
   // Strip HTML but keep Discord <@id>/<#id>/emote syntax intact.
@@ -86,18 +97,17 @@ function sanitizeOutsideCode(segment) {
 
   s = convertTablesOutsideCode(s);
 
-  // Spoilers and inline code legitimately use | and ` — shield them first.
-  const protectedSpans = [];
-  s = s.replace(/\|\|(.+?)\|\||`[^`\n]+`/g, match => {
-    protectedSpans.push(match);
-    return `\0SPAN${protectedSpans.length - 1}\0`;
-  });
+  // Multi-line `code` renders literally — fence it (empty-guard protects adjacent singles).
+  s = s.replace(/`([^`\n]*\n[^`]*?)`/g, (match, inner) =>
+    inner.trim() ? protect(`\`\`\`\n${inner.trim()}\n\`\`\``) : match);
+  s = s.replace(/\|\|(.+?)\|\||`[^`\n]+`/g, protect);
 
   s = s.split('\n').map(line => {
     return line.includes('|') ? line.replace(/\|/g, '│') : line;
   }).join('\n');
 
   s = s.replace(/\0SPAN(\d+)\0/g, (_, n) => protectedSpans[Number(n)] ?? '');
+  if (((s.match(/```/g) || []).length % 2) === 1) s = `${s.trimEnd()}\n\`\`\``;
 
   s = s.replace(/^(\s{0,3})#{1,6}\s+(.+?)\s*#*\s*$/gm, '$1**$2**');
   s = s.replace(/^([^\n]+)\n[ \t]*(=+|-{3,})[ \t]*$/gm, '**$1**');
@@ -123,15 +133,39 @@ function sanitizeOutsideCode(segment) {
   return s;
 }
 
+function decodeHtmlEntities(s) {
+  return String(s ?? '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;|&apos;|&#x27;/gi, "'")
+    .replace(/&nbsp;/g, ' ');
+}
+
 function toDiscordMarkdown(text) {
   if (text === null || text === undefined) return '';
-  const raw = String(text);
+  let raw = String(text);
   if (!raw) return '';
+  // Shield ```` nested demo blocks so inner ``` survive the split below.
+  const nested = [];
+  raw = raw.replace(/`{4,}[\s\S]*?`{4,}/g, m => {
+    nested.push(m);
+    return `\0NEST${nested.length - 1}\0`;
+  });
+  // Balance fences: an unclosed block would make Discord swallow the rest
+  // of the message into code; a lone fence that opens nothing is removed.
+  const fenceCount = (raw.match(/```/g) || []).length;
+  if (fenceCount % 2 === 1) {
+    const tail = raw.slice(raw.lastIndexOf('```') + 3);
+    const opensBlock = tail.startsWith('\n') || /^\w*\n/.test(tail);
+    raw = opensBlock ? `${raw.trimEnd()}\n\`\`\`` : raw.replace(/```/, '');
+  }
   const parts = protectFencedBlocks(raw);
   for (let i = 0; i < parts.length; i += 2) {
     parts[i] = sanitizeOutsideCode(parts[i]);
   }
-  return restoreFencedBlocks(parts).trim();
+  return restoreFencedBlocks(parts).replace(/\0NEST(\d+)\0/g, (_, n) => nested[Number(n)] ?? '').trim();
 }
 
 module.exports = { toDiscordMarkdown, convertTableBlock, isTableSeparator };

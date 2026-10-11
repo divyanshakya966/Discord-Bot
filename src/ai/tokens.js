@@ -17,8 +17,7 @@ function truncateHistory(history, maxTurns = 8, maxTokens = 6000) {
 // Output completeness: cuts (token cap, Discord cap) must land on sentence
 // boundaries, never mid-word. The model is also told to budget itself.
 function isCompleteResponse(text) {
-  // Structural check only — a mid-word cut is indistinguishable from a short
-  // reply by text alone; finish_reason === 'length' is the authority (completion.js).
+  // Structural check only — finish_reason === 'length' is the authority (completion.js).
   const t = String(text ?? '').trim();
   if (!t) return true;
   const fences = (t.match(/```/g) || []).length;

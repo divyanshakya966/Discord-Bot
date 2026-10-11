@@ -7,7 +7,7 @@ A Discord chatbot built with Discord.js and the official OpenRouter SDK — now 
 - Responds in DMs automatically
 - Responds in servers when mentioned, when replied to, or via slash command
 - Per-user conversation history (per server + per DM), resettable with `/clear`
-- Per-user model + personality prefs (fixed: previously guild-wide)
+- Per-user model + personality prefs
 - OpenRouter Chat Completions with retry, timeout, and param-compat fallback
 - Long replies arrive as one paged message with ◀ Prev / Next ▶ buttons (no channel flooding); code blocks stay fenced on every page
 - Discord-safe markdown (no raw tables/HTML/LaTeX) + auto-continued complete answers within the output token budget
@@ -21,7 +21,7 @@ A Discord chatbot built with Discord.js and the official OpenRouter SDK — now 
 - `/help` - Embed with all commands
 - `/ping` - Health check (gateway ping)
 - `/clear` - Clear your memory for this server/DM
-- `/ask question:<question>` - Ask the AI (progressive edits for long answers)
+- `/ask question:<question>` - Ask the AI (one paged answer with Prev/Next buttons)
 - `/stats` - Your current model/personality
 - `/export [format:json|md]` - Export history (JSON file or paged Markdown)
 
@@ -117,7 +117,7 @@ npm run check     # syntax check
 
 ## Notes
 
-- Settings are per-user now. Changing model/personality no longer affects the whole server.
+- Settings are per-user. Changing model/personality no longer affects the whole server.
 - Provider errors shown to users are sanitized; details go to logs.
 - If OpenRouter key is missing the bot runs degraded (replies with setup reminder).
 

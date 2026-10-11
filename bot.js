@@ -175,6 +175,7 @@ const {
   AUTO_CONTINUE_CHAR_BUDGET,
   collectStreamText,
   completeWithAutoContinue,
+  normalizeUsage,
 } = require('./src/ai/completion');
 
 function getEffectiveMaxTokens(modelId) {
@@ -373,7 +374,7 @@ async function runChat({ source, channel, userPrompt, replyMode }) {
     const { text: assistantReply, model: usedModel, usage } = await queryOpenRouter(modelMessages, sessionModel, wrappedOnChunk);
     const ms = Date.now() - t0;
     trackRequest(ms, false);
-    log.info('AI reply', { model: usedModel, ms, tokens: usage ? { in: usage.prompt_tokens, out: usage.completion_tokens, total: usage.total_tokens } : null });
+    log.info('AI reply', { model: usedModel, ms, tokens: normalizeUsage(usage) });
     await historyStore.append(sessionKey, userPrompt, assistantReply);
 
     return sendPagedAIReply(replyMode, assistantReply);
@@ -836,22 +837,22 @@ client.on(Events.Error, error => logger.error('Discord client error', { error: e
 process.on('unhandledRejection', error => logger.error('Unhandled rejection', { error: error?.message || String(error) }));
 
 // ---------- Boot ----------
-async function pruneOldHistories(maxAgeDays = 30, maxFiles = 2000) {
+async function pruneOldHistories(maxAgeDays = 30, maxFiles = 2000, dir = DATA_DIR) {
   try {
     const fs = require('fs').promises;
-    const entries = await fs.readdir(DATA_DIR);
+    const entries = await fs.readdir(dir);
     const now = Date.now();
     const cutoff = now - maxAgeDays * 24 * 3600 * 1000;
     let removed = 0;
     const jsonFiles = entries.filter(f => f.endsWith('.json') && !['model_preferences.json', 'personality_preferences.json', 'personalities.json'].includes(f));
     // Drop orphaned atomic-write temps from crashed saves.
     for (const f of entries.filter(f => f.endsWith('.tmp'))) {
-      try { await fs.unlink(path.join(DATA_DIR, f)); removed++; } catch {}
+      try { await fs.unlink(path.join(dir, f)); removed++; } catch {}
     }
     const withStat = [];
     for (const f of jsonFiles) {
       try {
-        const st = await fs.stat(path.join(DATA_DIR, f));
+        const st = await fs.stat(path.join(dir, f));
         withStat.push({ f, mtime: st.mtimeMs });
       } catch {}
     }
@@ -859,7 +860,7 @@ async function pruneOldHistories(maxAgeDays = 30, maxFiles = 2000) {
     const overCap = new Set(withStat.length > maxFiles ? withStat.slice(0, withStat.length - maxFiles).map(o => o.f) : []);
     for (const { f, mtime } of withStat) {
       if (mtime < cutoff || overCap.has(f)) {
-        try { await fs.unlink(path.join(DATA_DIR, f)); removed++; } catch {}
+        try { await fs.unlink(path.join(dir, f)); removed++; } catch {}
       }
     }
     if (removed) logger.info('Pruned old histories', { removed });
@@ -889,6 +890,8 @@ async function boot() {
 }
 
 async function shutdown(signal) {
+  if (shutdown.invoked) return;
+  shutdown.invoked = true;
   logger.info(`Received ${signal}, shutting down…`);
   try {
     await client.destroy();
@@ -910,4 +913,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { client, handleCommand, handleButton, handleSlashCommand, handleAutocomplete, runChat, getSessionModel, getSessionPersonality, queryOpenRouter, sendPagedAIReply, sendPagedFollowUp, getEffectiveMaxTokens, lastPromptBySession, CONTINUE_PROMPT, MAX_AUTO_CONTINUATIONS, AUTO_CONTINUE_CHAR_BUDGET };
+module.exports = { client, handleCommand, handleButton, handleSlashCommand, handleAutocomplete, runChat, getSessionModel, getSessionPersonality, queryOpenRouter, sendPagedAIReply, sendPagedFollowUp, getEffectiveMaxTokens, lastPromptBySession, pruneOldHistories, CONTINUE_PROMPT, MAX_AUTO_CONTINUATIONS, AUTO_CONTINUE_CHAR_BUDGET };

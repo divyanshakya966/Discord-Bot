@@ -12,6 +12,42 @@ function isLengthTruncated(finishReason) {
   return finishReason === 'length';
 }
 
+function pickNumber(...vals) {
+  for (const v of vals) {
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+  }
+  return undefined;
+}
+
+// Streaming responses often omit usage (or yield {}); providers also vary
+// field names. Normalize to { in, out, total } or null when meaningless.
+function normalizeUsage(usage) {
+  if (!usage || typeof usage !== 'object') return null;
+  // Already normalized (e.g. merged across continuations) — pass through.
+  if (typeof usage.in === 'number' || typeof usage.out === 'number' || typeof usage.total === 'number') {
+    const inp = Number.isFinite(usage.in) ? usage.in : 0;
+    const out = Number.isFinite(usage.out) ? usage.out : 0;
+    const total = Number.isFinite(usage.total) ? usage.total : inp + out;
+    if (!inp && !out && !total) return null;
+    return { in: inp, out, total };
+  }
+  const inp = pickNumber(usage.prompt_tokens, usage.input_tokens, usage.promptTokens, usage.inputTokens);
+  const out = pickNumber(usage.completion_tokens, usage.output_tokens, usage.completionTokens, usage.outputTokens);
+  const total = pickNumber(usage.total_tokens, usage.totalTokens, inp !== undefined && out !== undefined ? inp + out : undefined);
+  if (inp === undefined && out === undefined && total === undefined) return null;
+  return { in: inp ?? 0, out: out ?? 0, total: total ?? (inp ?? 0) + (out ?? 0) };
+}
+
+// Sum usage across stitched continuations so cost tracking reflects the
+// whole answer. Plain `a || b` would keep an empty {} and drop real data.
+function mergeUsage(a, b) {
+  const x = normalizeUsage(a);
+  const y = normalizeUsage(b);
+  if (!x) return y;
+  if (!y) return x;
+  return { in: x.in + y.in, out: x.out + y.out, total: x.total + y.total };
+}
+
 /**
  * Drain a streaming response, tolerating SDK shape variations
  * (delta.content vs message.content vs text; finish_reason casing).
@@ -58,7 +94,7 @@ async function completeWithAutoContinue(sendFn, baseMessages, opts = {}) {
       { role: 'user', content: CONTINUE_PROMPT },
     ]);
     text = isCompleteResponse(text) ? `${text}\n\n${next.text}`.trim() : `${text} ${next.text}`.trim();
-    usage = next.usage || usage;
+    usage = mergeUsage(usage, next.usage);
     finishReason = next.finishReason;
   }
   return { text, usage, finishReason, continuations };
@@ -69,6 +105,8 @@ module.exports = {
   MAX_AUTO_CONTINUATIONS,
   AUTO_CONTINUE_CHAR_BUDGET,
   isLengthTruncated,
+  normalizeUsage,
+  mergeUsage,
   collectStreamText,
   completeWithAutoContinue,
 };
