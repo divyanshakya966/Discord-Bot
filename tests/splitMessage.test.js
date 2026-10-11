@@ -36,3 +36,16 @@ test('code-safe split keeps fences balanced-ish', () => {
   const chunks = splitCodeSafe(code, 1900);
   for (const c of chunks) assert.ok(c.length <= 2100);
 });
+
+test('code-safe continuation pages reopen the fence with language', () => {
+  const code = '```js\n' + 'console.log(1);\n'.repeat(300) + '```';
+  const chunks = splitCodeSafe(code, 1900);
+  assert.ok(chunks.length > 1);
+  for (const c of chunks) {
+    const fences = (c.match(/```/g) || []).length;
+    assert.equal(fences % 2, 0, 'every page must have balanced fences');
+  }
+  for (let i = 1; i < chunks.length; i++) {
+    assert.ok(chunks[i].startsWith('```js'), `page ${i} must reopen with language`);
+  }
+});

@@ -36,6 +36,15 @@ test('mutex serializes per key', async () => {
   assert.deepEqual(order, ['start1', 'end1', 'start2', 'end2', 'start3', 'end3']);
 });
 
+test('mutex evicts idle keys instead of leaking', async () => {
+  const { _chains } = require('../src/store/mutex');
+  await withLock('tmp-leak-check-1', async () => 1);
+  await withLock('tmp-leak-check-2', async () => { throw new Error('boom'); }).catch(() => {});
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(_chains.has('tmp-leak-check-1'), false);
+  assert.equal(_chains.has('tmp-leak-check-2'), false);
+});
+
 test('config validation', () => {
   const { validateConfig } = require('../src/config');
   const errs = validateConfig({ DISCORD_TOKEN: '', OPENROUTER_API_KEY: '' });

@@ -17,7 +17,6 @@ test('history append + load round-trips and trims', async () => {
   await store.append('guild:g1:user:u1', 'third?', 'third answer');
   const h = await store.load('guild:g1:user:u1');
   assert.ok(h.length <= 4); // maxHistory=2 turns = 4 entries
-  // file exists and is valid JSON
   const files = await fs.readdir(dir);
   assert.equal(files.length, 1);
 });
@@ -35,6 +34,15 @@ test('json prefs store persists', async () => {
   const prefs = createJsonStore('model_preferences.json', { dataDir: dir });
   await prefs.set('guild:g1:user:u1', 'openai/gpt-4-turbo');
   assert.equal(await prefs.get('guild:g1:user:u1'), 'openai/gpt-4-turbo');
+});
+
+test('history cache is bounded and reloads evicted sessions from disk', async () => {
+  const dir = await tmpDir();
+  const store = createHistoryStore({ dataDir: dir, maxHistory: 2, maxTokens: 100000, maxCachedSessions: 5 });
+  for (let i = 0; i < 10; i++) await store.append(`dm:cap${i}`, `q${i}`, `a${i}`);
+  assert.ok(store._cache.size <= 5, `cache size ${store._cache.size}`);
+  const h = await store.load('dm:cap0');
+  assert.deepEqual(h, [{ role: 'user', content: 'q0' }, { role: 'assistant', content: 'a0' }]);
 });
 
 test('safeReply splits long content', async () => {

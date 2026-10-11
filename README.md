@@ -9,7 +9,8 @@ A Discord chatbot built with Discord.js and the official OpenRouter SDK — now 
 - Per-user conversation history (per server + per DM), resettable with `/clear`
 - Per-user model + personality prefs (fixed: previously guild-wide)
 - OpenRouter Chat Completions with retry, timeout, and param-compat fallback
-- Long replies auto-split under Discord's 2000-char limit (no more crashes)
+- Long replies arrive as one paged message with ◀ Prev / Next ▶ buttons (no channel flooding); code blocks stay fenced on every page
+- Discord-safe markdown (no raw tables/HTML/LaTeX) + auto-continued complete answers within the output token budget
 - Embeds + buttons (Retry / Continue / Clear) + autocomplete for models/personalities
 - Code analysis mode, research mode (cached web search), `/stats`, `/export`
 - Cooldowns + input caps to protect API quota; structured logs; graceful shutdown
@@ -22,7 +23,7 @@ A Discord chatbot built with Discord.js and the official OpenRouter SDK — now 
 - `/clear` - Clear your memory for this server/DM
 - `/ask question:<question>` - Ask the AI (progressive edits for long answers)
 - `/stats` - Your current model/personality
-- `/export [format:json|md]` - Export history (JSON file or Markdown)
+- `/export [format:json|md]` - Export history (JSON file or paged Markdown)
 
 ### Model & Personality (per-user, autocomplete)
 - `/model list` - Embed list
@@ -98,7 +99,7 @@ Safety tuning: `MAX_PROMPT_CHARS` (4000), `MAX_CODE_CHARS` (6000), `COOLDOWN_MS`
 ## Testing & Ops
 
 ```bash
-npm test          # node --test tests/*.test.js (56 automated checks)
+npm test          # node --test tests/*.test.js (full automated suite)
 npm run check     # syntax check
 ```
 - CI (`.github/workflows/ci.yml`): install, syntax check, tests, `npm audit`.

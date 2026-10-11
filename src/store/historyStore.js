@@ -4,20 +4,29 @@ const { getHistoryFilePath } = require('./sessions');
 const { truncateHistory } = require('../ai/tokens');
 const path = require('path');
 
-function createHistoryStore({ dataDir, maxHistory = 8, maxTokens = 6000 } = {}) {
+function createHistoryStore({ dataDir, maxHistory = 8, maxTokens = 6000, maxCachedSessions = 1000 } = {}) {
   const cache = new Map();
+
+  // Disk is the source of truth, so dropping a memory copy is safe.
+  function setCached(sessionKey, history) {
+    cache.delete(sessionKey);
+    cache.set(sessionKey, history);
+    while (cache.size > maxCachedSessions) {
+      cache.delete(cache.keys().next().value);
+    }
+  }
 
   async function load(sessionKey) {
     if (cache.has(sessionKey)) return cache.get(sessionKey);
     const fp = getHistoryFilePath(dataDir, sessionKey);
     const data = await readJson(fp, []);
     const arr = Array.isArray(data) ? data : [];
-    cache.set(sessionKey, arr);
+    setCached(sessionKey, arr);
     return arr;
   }
 
   async function save(sessionKey, history) {
-    cache.set(sessionKey, history);
+    setCached(sessionKey, history);
     const fp = getHistoryFilePath(dataDir, sessionKey);
     return withLock(`history:${sessionKey}`, () => atomicWriteFile(fp, JSON.stringify(history, null, 2)));
   }
@@ -30,7 +39,7 @@ function createHistoryStore({ dataDir, maxHistory = 8, maxTokens = 6000 } = {}) 
         const fp = getHistoryFilePath(dataDir, sessionKey);
         const data = await readJson(fp, []);
         history = Array.isArray(data) ? data : [];
-        cache.set(sessionKey, history);
+        setCached(sessionKey, history);
       }
       history.push({ role: 'user', content: userPrompt });
       history.push({ role: 'assistant', content: assistantReply });
@@ -57,7 +66,7 @@ function createHistoryStore({ dataDir, maxHistory = 8, maxTokens = 6000 } = {}) 
   return { load, save, append, clear, invalidate, _cache: cache };
 }
 
-// Generic cached JSON store (model/personality prefs).
+// Cached JSON store (model/personality prefs).
 function createJsonStore(fileName, { dataDir } = {}) {
   const filePath = path.join(dataDir, fileName);
   let cache = null;

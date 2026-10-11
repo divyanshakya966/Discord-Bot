@@ -9,6 +9,7 @@ function helpEmbed(prefix = '/') {
     `**Basic**\n${prefix}help · ${prefix}ping · ${prefix}clear · ${prefix}ask\n\n` +
     `**AI Setup**\n${prefix}model · ${prefix}personality (try \`girl\` 💕)\n\n` +
     `**Pro modes**\n${prefix}code · ${prefix}research · ${prefix}stats · ${prefix}export\n\n` +
+    `Long answers arrive as one paged message — use ◀ Prev / Next ▶ to read everything.\n` +
     `Tip: mention me or reply to my message to continue a thread. Prefix \`!\` also works (e.g. \`!help\`).`
   ).addFields(
     { name: 'Ask', value: `\`${prefix}ask question:<…>\``, inline: true },

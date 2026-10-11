@@ -8,7 +8,7 @@ function extractProviderErrorMessage(error) {
 
 function isLikelyParameterCompatibilityError(message) {
   if (!message) return false;
-  return /(unsupported|invalid|unrecognized).*(parameter|field)|top[ _-]?p|frequency[ _-]?penalty|presence[ _-]?penalty/i.test(message);
+  return /(unsupported|invalid|unrecognized).*(parameter|field)|top[ _-]?p|frequency[ _-]?penalty|presence[ _-]?penalty|temperature/i.test(message);
 }
 
 function isRetryableError(error) {
@@ -24,7 +24,15 @@ function isModelUnavailableError(error) {
   return /not found|unknown model|no route|access denied|forbidden|unauthorized|unavailable for free|paid version is available/i.test(msg);
 }
 
-// Detailed one-line summary for server logs only (never shown to users).
+// Key/account problems can't be fixed by switching models — skip fallback.
+function isAuthError(error) {
+  const msg = extractProviderErrorMessage(error);
+  if (/invalid (api key|auth)|incorrect api key|missing api key|authentication|unauthorized|invalid credentials/i.test(msg)) return true;
+  const status = error?.status ?? error?.statusCode ?? error?.response?.status;
+  return status === 401;
+}
+
+// One-line summary for server logs only (never shown to users).
 function describeProviderError(error) {
   const msg = extractProviderErrorMessage(error);
   const status = error?.status ?? error?.statusCode ?? error?.response?.status ?? error?.code;
@@ -44,6 +52,9 @@ function toUserFacingProviderError(error, model) {
   void model;
   const raw = extractProviderErrorMessage(error);
   const short = raw.length > 200 ? raw.slice(0, 200) + '…' : raw;
+  if (isAuthError(error)) {
+    return 'The AI provider rejected the API key. Please check the bot configuration and try again later.';
+  }
   if (/insufficient|credit|quota|billing|payment/i.test(raw)) {
     return 'The AI provider is out of credits/quota for now. Please try again later.';
   }
@@ -56,4 +67,4 @@ function toUserFacingProviderError(error, model) {
   return `AI request failed — please retry. Details: ${short}`;
 }
 
-module.exports = { extractProviderErrorMessage, isLikelyParameterCompatibilityError, isRetryableError, isModelUnavailableError, describeProviderError, toUserFacingProviderError };
+module.exports = { extractProviderErrorMessage, isLikelyParameterCompatibilityError, isRetryableError, isModelUnavailableError, isAuthError, describeProviderError, toUserFacingProviderError };

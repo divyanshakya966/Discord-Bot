@@ -28,3 +28,22 @@ test('ddg parser handles abstract and related topics', () => {
   assert.ok(out.includes('https://h.test') && out.includes('https://r.test'));
   assert.equal(parseDuckDuckGoResponse({}), null);
 });
+
+test('serper output is capped at the provider budget', () => {
+  const big = 'word '.repeat(2000);
+  const out = parseSerperResults({ organic: [
+    { title: 'A', snippet: big, link: 'https://a.test' },
+    { title: 'B', snippet: big, link: 'https://b.test' },
+    { title: 'C', snippet: big, link: 'https://c.test' },
+  ] });
+  assert.ok(out.length <= 2000, `len ${out.length}`);
+  assert.ok(out.includes('https://a.test'));
+});
+
+test('snippets end at word boundaries and decode entities', () => {
+  const out = parseSerperResults({ organic: [
+    { title: 'E', snippet: 'Fish &lt;b&gt;chips&lt;/b&gt; &amp; mushy peas are great and tasty', link: '' },
+  ] });
+  assert.ok(out.includes('Fish <b>chips</b> & mushy'), `got ${out}`);
+  assert.ok(!out.includes('&lt;') && !out.includes('&amp;'));
+});

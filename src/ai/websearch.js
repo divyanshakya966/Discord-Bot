@@ -1,23 +1,37 @@
+const { trimToCompleteChars } = require('./tokens');
+
+const SNIPPET_CHARS = 500; // per-result budget: complete sentences, never mid-word
+const TOTAL_CHARS = 2000; // per-provider budget, matching research context limits
+
 function stripHtml(s) {
-  return String(s || '').replace(/<[^>]*>/g, '').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim();
+  return String(s || '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;|&apos;|&#x27;/gi, "'")
+    .replace(/&nbsp;/g, ' ')
+    .trim();
 }
 
 function parseSerperResults(data) {
   const results = data?.organic || [];
   if (!results.length) return null;
-  return results
+  const out = results
     .slice(0, 3)
-    .map(r => `**${r.title}** — ${r.snippet}\n${r.link || ''}`.trim())
+    .map(r => `**${r.title}** — ${trimToCompleteChars(stripHtml(r.snippet), SNIPPET_CHARS)}\n${r.link || ''}`.trim())
     .join('\n\n');
+  return trimToCompleteChars(out, TOTAL_CHARS) || null;
 }
 
 function parseDuckDuckGoResponse(data) {
   const out = [];
-  if (data?.AbstractText) out.push(`**${data.Heading || 'Summary'}** — ${data.AbstractText}\n${data.AbstractURL || ''}`.trim());
+  if (data?.AbstractText) out.push(`**${data.Heading || 'Summary'}** — ${trimToCompleteChars(stripHtml(data.AbstractText), SNIPPET_CHARS)}\n${data.AbstractURL || ''}`.trim());
   for (const t of (data?.RelatedTopics || []).slice(0, 3)) {
-    if (typeof t?.Text === 'string' && t.Text) out.push(`**Related** — ${t.Text.slice(0, 300)}${t.FirstURL ? `\n${t.FirstURL}` : ''}`);
+    if (typeof t?.Text === 'string' && t.Text) out.push(`**Related** — ${trimToCompleteChars(t.Text, 300)}${t.FirstURL ? `\n${t.FirstURL}` : ''}`);
   }
-  return out.length ? out.join('\n\n').slice(0, 2000) : null;
+  return out.length ? trimToCompleteChars(out.join('\n\n'), TOTAL_CHARS) : null;
 }
 
 function wikiPageUrl(title) {
@@ -29,7 +43,7 @@ function parseWikipediaResponse(data) {
   if (!results.length) return null;
   return results
     .slice(0, 3)
-    .map(r => `**${r.title}** — ${stripHtml(r.snippet).slice(0, 300)}\n${wikiPageUrl(r.title)}`)
+    .map(r => `**${r.title}** — ${trimToCompleteChars(stripHtml(r.snippet), 300)}\n${wikiPageUrl(r.title)}`)
     .join('\n\n');
 }
 

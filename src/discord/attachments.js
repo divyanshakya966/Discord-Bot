@@ -1,7 +1,7 @@
+const { trimToCompleteChars } = require('../ai/tokens');
 const TEXT_EXT = ['.txt', '.md', '.markdown', '.js', '.ts', '.py', '.json', '.yml', '.yaml', '.java', '.c', '.cpp', '.rs', '.go', '.log', '.csv'];
 const MAX_ATTACH_BYTES = 100 * 1024;
 const MAX_TOTAL_CHARS = 6000;
-
 function isTextAttachment(att) {
   const name = (att?.name || '').toLowerCase();
   if (att?.size > MAX_ATTACH_BYTES) return false;
@@ -38,7 +38,7 @@ async function collectAttachmentContext(message, basePrompt) {
       notes.push(`could not read ${att.name || 'attachment'}`);
     }
   }
-  const prompt = (basePrompt + extra).slice(0, 12000);
+  const prompt = trimToCompleteChars(basePrompt + extra, 12000);
   return { prompt, notes };
 }
 

@@ -1,4 +1,4 @@
-# Contributing to Discord Management Bot
+# Contributing to Discord AI Chatbot
 
 Thank you for considering contributing! This guide explains how to report bugs, suggest features, and submit code changes.
 
@@ -100,9 +100,10 @@ Test all changes on a **private Discord server** you own before submitting.
 - Use `const`/`let`, never `var`
 - Use `async/await`, never raw `.then()` chains
 - All user input **must** be length-capped (`MAX_PROMPT_CHARS` / `MAX_CODE_CHARS`) before sending to the LLM
-- All bot replies **must** go through `src/utils/safeReply.js` (auto-split under 2000 chars) with `allowedMentions: { parse: [] }`
+- Long AI replies **must** go through the pager (`src/discord/pagination.js`); short/system messages go through `src/utils/safeReply.js` — both with `allowedMentions: { parse: [] }`
+- All bot markdown **must** be Discord-safe (`src/utils/discordMarkdown.js` + prompt rules in `src/ai/systemPrompt.js`)
 - All Discord replies **should** use embeds from `src/discord/embeds.js` (`helpEmbed`, `infoEmbed`, `errorEmbed`)
-- Pure logic (routing, splitting, tokens, errors) **must** live in `src/` with tests in `tests/` (`node --test tests/`)
+- Pure logic (routing, splitting, tokens, errors, pagination, markdown, completion) **must** live in `src/` with tests in `tests/` (`node --test tests/`)
 - Never log secrets — use `src/logger.js` (auto-redacts tokens/keys)
 
 **Good:**
@@ -127,8 +128,8 @@ Use conventional commit prefixes:
 
 **Examples:**
 ```
-feat: add /timeout command with auto-unban timer
-fix: purge not deleting bot message after cleanup
-docs: add VPS setup instructions for Arch Linux
+feat: add page-size option for long answers
+fix: code fence missing on continued pages
+docs: document DISCORD_GUILD_ID instant testing
 refactor: extract permission check into reusable helper
 ```

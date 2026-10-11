@@ -13,9 +13,6 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node --check bot.js
-      - run: node --check commands.js
-      - run: node --check bot-data.js
-      - run: node --check deploy-commands.js
+      - run: npm run check
       - run: npm test --if-present
       - run: npm audit --audit-level=moderate

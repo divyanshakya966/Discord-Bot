@@ -9,7 +9,7 @@
     "deploy-commands": "node deploy-commands.js",
     "test": "node --test tests/*.test.js",
     "test:bun": "bun test",
-    "check": "node --check bot.js && node --check commands.js && node --check bot-data.js && node --check deploy-commands.js",
+    "check": "find bot.js commands.js bot-data.js deploy-commands.js src tests -name '*.js' -print0 | xargs -0 -n1 node --check",
     "audit": "npm audit --audit-level=moderate",
     "service:install": "mkdir -p ~/.config/systemd/user && cp systemd/discord-bot.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now discord-bot",
     "service:logs": "journalctl --user -u discord-bot -f",

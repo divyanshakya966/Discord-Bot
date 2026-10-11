@@ -2,14 +2,14 @@ const { SlashCommandBuilder } = require('discord.js');
 
 const slashCommands = [
   new SlashCommandBuilder().setName('help').setDescription('Show available commands and modes'),
-  new SlashCommandBuilder().setName('ping').setDescription('Check bot health, latency and uptime'),
+  new SlashCommandBuilder().setName('ping').setDescription('Check bot health and latency'),
   new SlashCommandBuilder()
     .setName('clear')
     .setDescription('Clear your conversation memory for this server or DM'),
-  new SlashCommandBuilder().setName('stats').setDescription('Show bot usage stats and current settings'),
+  new SlashCommandBuilder().setName('stats').setDescription('Show your current model and personality'),
   new SlashCommandBuilder()
     .setName('export')
-    .setDescription('Export your conversation history as JSON')
+    .setDescription('Export your conversation history as JSON or Markdown')
     .addStringOption(o => o.setName('format').setDescription('Export format').setRequired(false).addChoices(
       { name: 'JSON', value: 'json' },
       { name: 'Markdown', value: 'md' },

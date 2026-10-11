@@ -6,7 +6,7 @@ async function ensureDir(dir) {
   await fs.mkdir(dir, { recursive: true });
 }
 
-// Atomic write: write to tmp then rename (POSIX atomic on same fs).
+// Write to tmp then rename (POSIX-atomic on the same filesystem).
 async function atomicWriteFile(filePath, data) {
   await ensureDir(path.dirname(filePath));
   const tmp = `${filePath}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;

@@ -1,5 +1,15 @@
 # Changelog - Premium Features Release
 
+## Unreleased - Paged replies, Discord-safe markdown, complete outputs
+
+- Long AI answers now arrive as ONE paged message with ◀ Prev / Next ▶ buttons (`src/discord/pagination.js`, 30-min sessions) instead of N follow-up messages flooding the channel; `/code`, `/research`, Retry/Continue, and `/export md` all page the same way.
+- Discord-safe markdown everywhere: new `src/utils/discordMarkdown.js` rewrites tables → bullets, `# heads` → bold, task/footnote/LaTeX/HTML/reference syntax into supported forms (code fences and `||spoilers||` preserved), enforced by a strict system-prompt rule plus idempotent sanitizing in `safeReply.js`.
+- Complete outputs within budget: `finish_reason === 'length'` is detected and auto-continued (bounded: 2 follow-ups, 12000 chars, mid-sentence joins with a space) via `src/ai/completion.js`; per-model `maxTokens` caps are now respected; display trims land on sentence boundaries, never mid-word.
+- Fixes: footnote bodies no longer collapsed, code pages reopen fences with language tags, expired pager uses `flags` (not deprecated `ephemeral`), no fallback burn on invalid API keys (clear config hint instead), temperature rejections qualify for reduced-params retry, single shared Continue prompt, mutex chain map evicted when idle, crashed-write `.tmp` files pruned, Serper capped/trimmed like DDG, `/ping`+`/stats` descriptions match the privacy-preserving behavior, `npm run check`/CI now cover every source file.
+- Retry fidelity: `/code`+`/research` remember the full user prompt (not a truncated label), and `/code`, `/research`, Retry/Continue fail fast with the setup reminder when no API key is set instead of attempting network calls; mocked runtime suite (`tests/runtime.test.js`, CI-safe with or without `.env`) covers all command/button/degraded paths.
+- Bounds + wiring: history memory cache capped (reloads evicted sessions from disk), mutex chains evicted, unknown slash commands answer instead of hanging deferred, slash definitions contract-tested against handlers, syntax check covers every file.
+- Ops note: `commands.js` descriptions changed (`/ping`, `/stats`, `/export`) — run `npm run deploy-commands` and restart.
+
 ## Version 2.3.2 - Verified free models + auto-fallback
 
 - Live-probed OpenRouter with the real key: `openrouter/free` (200, routes to a live free model) and `nvidia/nemotron-3-super-120b-a12b:free` (200) verified working; Gemma 3/GPT-OSS/GLM free slugs return 404 (retired), Gemma 4 free exists but was upstream-429 at probe time.

@@ -1,10 +1,19 @@
 const { MessageFlags } = require('discord.js');
 const { splitCodeSafe } = require('./splitMessage');
+const { toDiscordMarkdown } = require('./discordMarkdown');
 
 const NO_PING = { parse: [] };
 
+function sanitize(content) {
+  try {
+    return toDiscordMarkdown(String(content ?? ''));
+  } catch {
+    return String(content ?? '');
+  }
+}
+
 async function safeReplyToMessage(message, content, options = {}) {
-  const chunks = splitCodeSafe(String(content ?? ''), options.maxLength || 1900);
+  const chunks = splitCodeSafe(sanitize(content), options.maxLength || 1900);
   const first = await message.reply({
     content: chunks[0],
     allowedMentions: NO_PING,
@@ -17,7 +26,7 @@ async function safeReplyToMessage(message, content, options = {}) {
 }
 
 async function safeEditReply(interaction, content, options = {}) {
-  const chunks = splitCodeSafe(String(content ?? ''), options.maxLength || 1900);
+  const chunks = splitCodeSafe(sanitize(content), options.maxLength || 1900);
   await interaction.editReply({ content: chunks[0], allowedMentions: NO_PING });
   for (let i = 1; i < chunks.length; i++) {
     await interaction.followUp({ content: chunks[i], allowedMentions: NO_PING, ...(options.ephemeralFollowUps ? { flags: MessageFlags.Ephemeral } : {}) });
@@ -25,7 +34,7 @@ async function safeEditReply(interaction, content, options = {}) {
 }
 
 async function safeFollowUp(interactionOrChannel, content, options = {}) {
-  const chunks = splitCodeSafe(String(content ?? ''), options.maxLength || 1900);
+  const chunks = splitCodeSafe(sanitize(content), options.maxLength || 1900);
   for (const c of chunks) {
     if (typeof interactionOrChannel.followUp === 'function') {
       await interactionOrChannel.followUp({ content: c, allowedMentions: NO_PING, ...(options.ephemeral ? { flags: MessageFlags.Ephemeral } : {}) });

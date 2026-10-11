@@ -7,17 +7,18 @@ const { AVAILABLE_MODELS, DEFAULT_PERSONALITIES, RETIRED_MODEL_IDS } = require('
 const { getSessionKey, getModelKey, getPersonalityKey } = require('./src/store/sessions');
 const { createHistoryStore, createJsonStore } = require('./src/store/historyStore');
 const { ensureDir } = require('./src/store/atomic');
-const { splitCodeSafe } = require('./src/utils/splitMessage');
+const { buildInitialPagedPayload, handlePaginationButton } = require('./src/discord/pagination');
 const { safeReplyToMessage, safeEditReply } = require('./src/utils/safeReply');
 const {
   extractProviderErrorMessage,
   isLikelyParameterCompatibilityError,
   isModelUnavailableError,
+  isAuthError,
   describeProviderError,
   toUserFacingProviderError,
 } = require('./src/ai/errors');
 const { withRetry } = require('./src/ai/retry');
-const { truncateHistory } = require('./src/ai/tokens');
+const { truncateHistory, trimToCompleteChars } = require('./src/ai/tokens');
 const { CooldownManager } = require('./src/discord/cooldown');
 const { startTypingLoop } = require('./src/discord/typing');
 const { parseMentionCommand, parsePrefixCommand } = require('./src/discord/routing');
@@ -127,6 +128,29 @@ function trackRequest(latencyMs, failed = false) {
   if (failed) stats.totalErrors++;
 }
 
+const NOT_CONFIGURED_MSG = 'The AI is not configured yet. Please check the bot setup and try again.';
+
+async function replyNotConfigured(replyMode) {
+  if (replyMode.kind === 'message') await safeReplyToMessage(replyMode.message, NOT_CONFIGURED_MSG);
+  else await safeEditReply(replyMode.interaction, NOT_CONFIGURED_MSG);
+}
+
+// ---------- Paged AI replies ----------
+// One paged message per answer (Prev/Next buttons, no channel flood); the payload builder also sanitizes markdown.
+async function sendPagedAIReply(replyMode, rawText) {
+  const payload = buildInitialPagedPayload(String(rawText ?? ''), actionRowForReply(), { maxChars: AUTO_CONTINUE_CHAR_BUDGET });
+  if (replyMode.kind === 'message') {
+    return replyMode.message.reply({ content: payload.content, allowedMentions: NO_PING, components: payload.components });
+  }
+  await replyMode.interaction.editReply({ content: payload.content, allowedMentions: NO_PING, components: payload.components });
+  return null;
+}
+
+async function sendPagedFollowUp(interaction, rawText) {
+  const payload = buildInitialPagedPayload(String(rawText ?? ''), actionRowForReply(), { maxChars: AUTO_CONTINUE_CHAR_BUDGET });
+  await interaction.followUp({ content: payload.content, allowedMentions: NO_PING, components: payload.components });
+}
+
 // ---------- OpenRouter ----------
 async function getOpenRouterClient() {
   if (!openRouterClientPromise) {
@@ -142,15 +166,31 @@ async function getOpenRouterClient() {
   return openRouterClientPromise;
 }
 
-// Single streaming implementation used by both message and slash paths.
-// Returns { text, model, usage }. Falls back to the default model once when the
+// Streams chat completions for message + slash paths; auto-continues
+// length-truncated outputs. Falls back to the default model once when the
 // session model is unavailable (retired slug, no route, key has no access).
+const {
+  CONTINUE_PROMPT,
+  MAX_AUTO_CONTINUATIONS,
+  AUTO_CONTINUE_CHAR_BUDGET,
+  collectStreamText,
+  completeWithAutoContinue,
+} = require('./src/ai/completion');
+
+function getEffectiveMaxTokens(modelId) {
+  const known = AVAILABLE_MODELS.find(m => m.id === modelId);
+  const cap = known?.maxTokens;
+  if (Number.isFinite(cap) && cap > 0) return Math.min(CONFIG.MAX_TOKENS, cap);
+  return CONFIG.MAX_TOKENS;
+}
+
 async function queryOpenRouter(messages, modelId, onChunk) {
   const openrouter = await getOpenRouterClient();
   const model = modelId || CONFIG.OPENROUTER_MODEL;
 
-  async function attempt(current) {
-    const base = { model: current, messages, maxTokens: CONFIG.MAX_TOKENS, temperature: CONFIG.TEMPERATURE, stream: true };
+  async function attempt(current, msgs = messages) {
+    const maxTokens = getEffectiveMaxTokens(current);
+    const base = { model: current, messages: msgs, maxTokens, temperature: CONFIG.TEMPERATURE, stream: true };
     const rich = { ...base, topP: CONFIG.TOP_P, frequencyPenalty: CONFIG.FREQUENCY_PENALTY, presencePenalty: CONFIG.PRESENCE_PENALTY };
 
     async function sendOnce(chatRequest) {
@@ -173,28 +213,33 @@ async function queryOpenRouter(messages, modelId, onChunk) {
       }
     }
 
-    let full = '';
-    let usage = null;
-    for await (const chunk of stream) {
-      const content = chunk.choices?.[0]?.delta?.content;
-      if (content) {
-        full += content;
-        if (onChunk) await onChunk(content);
-      }
-      if (chunk.usage) usage = chunk.usage;
+    const collected = await collectStreamText(stream, onChunk);
+    return { ...collected, maxTokens };
+  }
+
+  // Stitch continuations when the provider hits the output token limit.
+  async function attemptComplete(current, baseMessages) {
+    const sendFn = (msgs) => attempt(current, msgs);
+    const { text, usage, finishReason, continuations } = await completeWithAutoContinue(sendFn, baseMessages);
+    if (continuations > 0) {
+      logger.info('Auto-continued truncated output', { model: current, continuations, chars: text.length });
     }
-    return { text: full.trim() || 'No response returned by model.', usage };
+    if (finishReason === 'length') {
+      logger.warn('Output still truncated after auto-continue', { model: current, chars: text.length });
+    }
+    return { text, usage, finishReason };
   }
 
   try {
-    const { text, usage } = await attempt(model);
+    const { text, usage } = await attemptComplete(model, messages);
     return { text, model, usage };
   } catch (error) {
     const fallback = CONFIG.OPENROUTER_MODEL;
-    if (model !== fallback && isModelUnavailableError(error)) {
+    // Auth failures can't be fixed by switching models — fail fast instead of burning a fallback call.
+    if (model !== fallback && !isAuthError(error) && isModelUnavailableError(error)) {
       logger.warn('Session model unavailable, falling back', { detail: describeProviderError(error), from: model, to: fallback });
       try {
-        const fb = await attempt(fallback);
+        const fb = await attemptComplete(fallback, messages);
         return { text: fb.text, model: fallback, usage: fb.usage };
       } catch (fallbackError) {
         logger.error('Fallback model failed', { detail: describeProviderError(fallbackError), model: fallback });
@@ -279,9 +324,7 @@ function stripBotMention(content) {
 // ---------- Chat pipeline ----------
 async function runChat({ source, channel, userPrompt, replyMode }) {
   if (!CONFIG.OPENROUTER_API_KEY) {
-    const msg = 'The AI is not configured yet. Please check the bot setup and try again.';
-    if (replyMode.kind === 'message') await safeReplyToMessage(replyMode.message, msg);
-    else await safeEditReply(replyMode.interaction, msg);
+    await replyNotConfigured(replyMode);
     return;
   }
   if (!userPrompt?.trim()) {
@@ -333,15 +376,7 @@ async function runChat({ source, channel, userPrompt, replyMode }) {
     log.info('AI reply', { model: usedModel, ms, tokens: usage ? { in: usage.prompt_tokens, out: usage.completion_tokens, total: usage.total_tokens } : null });
     await historyStore.append(sessionKey, userPrompt, assistantReply);
 
-    const chunks = splitCodeSafe(assistantReply.slice(0, 12000));
-    if (replyMode.kind === 'message') {
-      const first = await replyMode.message.reply({ content: chunks[0], allowedMentions: NO_PING, components: [actionRowForReply()] });
-      for (let i = 1; i < chunks.length; i++) await replyMode.message.channel.send({ content: chunks[i], allowedMentions: NO_PING });
-      return first;
-    } else {
-      await replyMode.interaction.editReply({ content: chunks[0], allowedMentions: NO_PING, components: [actionRowForReply()] });
-      for (let i = 1; i < chunks.length; i++) await replyMode.interaction.followUp({ content: chunks[i], allowedMentions: NO_PING });
-    }
+    return sendPagedAIReply(replyMode, assistantReply);
   } catch (error) {
     trackRequest(Date.now() - t0, true);
     logger.error('Chat pipeline failed', { error: error?.message, sessionKey });
@@ -388,13 +423,8 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
     const history = await historyStore.load(getSessionKey(source));
     const fmt = (prompt || 'json').trim().toLowerCase();
     if (fmt === 'md') {
-      const md = history.map(m => `**${m.role}**: ${m.content}`).join('\n\n').slice(0, 18000) || 'No history.';
-      const chunks = splitCodeSafe(md);
-      if (replyMode.kind === 'message') {
-        await safeReplyToMessage(replyMode.message, chunks.join('\n\n').slice(0, 18000));
-      } else {
-        await safeEditReply(replyMode.interaction, chunks.join('\n\n').slice(0, 18000));
-      }
+      const md = trimToCompleteChars(history.map(m => `**${m.role}**: ${m.content}`).join('\n\n'), 18000) || 'No history.';
+      await sendPagedAIReply(replyMode, md);
       return;
     }
     const buf = Buffer.from(JSON.stringify(history, null, 2), 'utf-8');
@@ -482,6 +512,10 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
       else await safeEditReply(replyMode.interaction, msg);
       return;
     }
+    if (!CONFIG.OPENROUTER_API_KEY) {
+      await replyNotConfigured(replyMode);
+      return;
+    }
     if (prompt.length > CONFIG.MAX_CODE_CHARS) {
       const msg = `Code too long (${prompt.length} chars, max ${CONFIG.MAX_CODE_CHARS}). Paste a smaller snippet or link a file.`;
       if (replyMode.kind === 'message') await safeReplyToMessage(replyMode.message, msg);
@@ -505,15 +539,14 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
       else await safeEditReply(replyMode.interaction, msg);
       return;
     }
-    rememberPrompt(sessionKey, `Code Analysis: ${prompt.slice(0, 120)}`);
+    rememberPrompt(sessionKey, prompt);
     const stopTyping = startTypingLoop(channel);
     const t0 = Date.now();
     try {
       const { text: analysis } = await queryOpenRouter(messages, sessionModel);
       trackRequest(Date.now() - t0, false);
       await historyStore.append(sessionKey, `Code Analysis: ${prompt.slice(0, 120)}`, analysis);
-      if (replyMode.kind === 'message') await safeReplyToMessage(replyMode.message, analysis);
-      else await safeEditReply(replyMode.interaction, analysis);
+      await sendPagedAIReply(replyMode, analysis);
     } catch (e) {
       trackRequest(Date.now() - t0, true);
       const safe = (e?.message || 'Failed.').slice(0, 1500);
@@ -531,6 +564,10 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
       else await safeEditReply(replyMode.interaction, msg);
       return;
     }
+    if (!CONFIG.OPENROUTER_API_KEY) {
+      await replyNotConfigured(replyMode);
+      return;
+    }
     const personalities = await loadPersonalities();
     const researcher = personalities.researcher;
     const sessionKey = getSessionKey(source);
@@ -543,7 +580,7 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
       else await safeEditReply(replyMode.interaction, msg);
       return;
     }
-    rememberPrompt(sessionKey, `Research: ${prompt.slice(0, 120)}`);
+    rememberPrompt(sessionKey, prompt);
     const stopTyping = startTypingLoop(channel);
     const t0 = Date.now();
     try {
@@ -557,8 +594,7 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
       const { text: research } = await queryOpenRouter(messages, sessionModel);
       trackRequest(Date.now() - t0, false);
       await historyStore.append(sessionKey, `Research: ${prompt}`, research);
-      if (replyMode.kind === 'message') await safeReplyToMessage(replyMode.message, research);
-      else await safeEditReply(replyMode.interaction, research);
+      await sendPagedAIReply(replyMode, research);
     } catch (e) {
       trackRequest(Date.now() - t0, true);
       const safe = (e?.message || 'Failed.').slice(0, 1500);
@@ -622,6 +658,8 @@ async function handleSlashCommand(interaction) {
     await handleCommand(source, channel, command, '', replyMode);
     return;
   }
+  // Unknown slash names must not leave the deferred interaction hanging.
+  await replyMode.interaction.editReply({ content: `Unknown command: ${command}. Try /help.`, allowedMentions: NO_PING }).catch(() => {});
 }
 
 async function handleAutocomplete(interaction) {
@@ -643,6 +681,7 @@ async function handleAutocomplete(interaction) {
 }
 
 async function handleButton(interaction) {
+  if (await handlePaginationButton(interaction)) return;
   const sessionKey = getSessionKey(messageProxyFromInteraction(interaction));
   const last = lastPromptBySession.get(sessionKey);
   if (interaction.customId === 'clear') {
@@ -661,10 +700,14 @@ async function handleButton(interaction) {
     await interaction.reply({ content: `Slow down — try again in ${(cd.retryAfterMs / 1000).toFixed(1)}s.`, flags: MessageFlags.Ephemeral }).catch(() => {});
     return;
   }
+  if (!CONFIG.OPENROUTER_API_KEY) {
+    await interaction.reply({ content: NOT_CONFIGURED_MSG, flags: MessageFlags.Ephemeral }).catch(() => {});
+    return;
+  }
   await interaction.deferUpdate().catch(() => {});
   const channel = interaction.channel;
   const prompt = interaction.customId === 'continue'
-    ? 'Please continue your previous response from where it stopped. Do not repeat what you already said.'
+    ? CONTINUE_PROMPT
     : last;
   const history = await historyStore.load(sessionKey);
   const sessionModel = await getSessionModel(source);
@@ -673,9 +716,7 @@ async function handleButton(interaction) {
   try {
     const { text: reply } = await queryOpenRouter(modelMessages, sessionModel);
     await historyStore.append(sessionKey, prompt, reply);
-    const chunks = splitCodeSafe(reply);
-    await interaction.followUp({ content: chunks[0], allowedMentions: NO_PING });
-    for (let i = 1; i < chunks.length; i++) await interaction.followUp({ content: chunks[i], allowedMentions: NO_PING });
+    await sendPagedFollowUp(interaction, reply);
   } catch (e) {
     await interaction.followUp({ embeds: [errorEmbed((e?.message || 'Failed').slice(0, 500))], flags: MessageFlags.Ephemeral }).catch(() => {});
   } finally {
@@ -803,6 +844,10 @@ async function pruneOldHistories(maxAgeDays = 30, maxFiles = 2000) {
     const cutoff = now - maxAgeDays * 24 * 3600 * 1000;
     let removed = 0;
     const jsonFiles = entries.filter(f => f.endsWith('.json') && !['model_preferences.json', 'personality_preferences.json', 'personalities.json'].includes(f));
+    // Drop orphaned atomic-write temps from crashed saves.
+    for (const f of entries.filter(f => f.endsWith('.tmp'))) {
+      try { await fs.unlink(path.join(DATA_DIR, f)); removed++; } catch {}
+    }
     const withStat = [];
     for (const f of jsonFiles) {
       try {
@@ -865,4 +910,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { client, handleCommand, runChat, getSessionModel, getSessionPersonality, queryOpenRouter };
+module.exports = { client, handleCommand, handleButton, handleSlashCommand, handleAutocomplete, runChat, getSessionModel, getSessionPersonality, queryOpenRouter, sendPagedAIReply, sendPagedFollowUp, getEffectiveMaxTokens, lastPromptBySession, CONTINUE_PROMPT, MAX_AUTO_CONTINUATIONS, AUTO_CONTINUE_CHAR_BUDGET };

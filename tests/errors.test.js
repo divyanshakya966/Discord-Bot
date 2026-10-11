@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { extractProviderErrorMessage, isRetryableError, isModelUnavailableError, describeProviderError, toUserFacingProviderError } = require('../src/ai/errors');
+const { extractProviderErrorMessage, isRetryableError, isModelUnavailableError, isAuthError, isLikelyParameterCompatibilityError, describeProviderError, toUserFacingProviderError } = require('../src/ai/errors');
 
 test('extracts nested messages', () => {
   assert.equal(extractProviderErrorMessage({ error: { message: 'boom' } }), 'boom');
@@ -36,6 +36,24 @@ test('user-facing hides billing internals', () => {
 test('detects unavailable-model errors for fallback', () => {
   assert.equal(isModelUnavailableError({ response: { status: 404, data: { error: { message: 'This model is unavailable for free.' } } } }), true);
   assert.equal(isModelUnavailableError(new Error('rate limit exceeded')) , false);
+});
+
+test('auth errors are distinguished from model errors', () => {
+  assert.equal(isAuthError(new Error('invalid api key')), true);
+  assert.equal(isAuthError({ status: 401, message: 'Unauthorized' }), true);
+  assert.equal(isAuthError(new Error('This model is unavailable for free.')), false);
+  assert.equal(isAuthError(new Error('rate limit exceeded')), false);
+});
+
+test('auth errors get a configuration hint, not a retry prompt', () => {
+  const msg = toUserFacingProviderError(new Error('invalid api key'), 'm1');
+  assert.match(msg, /API key/);
+});
+
+test('temperature rejections qualify for reduced-params retry', () => {
+  assert.equal(isLikelyParameterCompatibilityError('Unsupported parameter: temperature'), true);
+  assert.equal(isLikelyParameterCompatibilityError('unrecognized field: top_p'), true);
+  assert.equal(isLikelyParameterCompatibilityError('plain rate limit'), false);
 });
 
 test('describe includes status for logs, never leaks keys', () => {
