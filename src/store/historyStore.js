@@ -31,18 +31,33 @@ function createHistoryStore({ dataDir, maxHistory = 8, maxTokens = 6000, maxCach
     return withLock(`history:${sessionKey}`, () => atomicWriteFile(fp, JSON.stringify(history, null, 2)));
   }
 
+  async function readLocked(sessionKey) {
+    if (cache.has(sessionKey)) return cache.get(sessionKey);
+    const fp = getHistoryFilePath(dataDir, sessionKey);
+    const data = await readJson(fp, []);
+    const history = Array.isArray(data) ? data : [];
+    setCached(sessionKey, history);
+    return history;
+  }
+
   async function append(sessionKey, userPrompt, assistantReply) {
     return withLock(`history:${sessionKey}`, async () => {
-      let history;
-      if (cache.has(sessionKey)) history = cache.get(sessionKey);
-      else {
-        const fp = getHistoryFilePath(dataDir, sessionKey);
-        const data = await readJson(fp, []);
-        history = Array.isArray(data) ? data : [];
-        setCached(sessionKey, history);
-      }
+      const history = await readLocked(sessionKey);
       history.push({ role: 'user', content: userPrompt });
       history.push({ role: 'assistant', content: assistantReply });
+      const trimmed = truncateHistory(history, maxHistory, maxTokens);
+      history.length = 0;
+      history.push(...trimmed);
+      const fp = getHistoryFilePath(dataDir, sessionKey);
+      await atomicWriteFile(fp, JSON.stringify(history, null, 2));
+      return history;
+    });
+  }
+
+  async function appendUser(sessionKey, content) {
+    return withLock(`history:${sessionKey}`, async () => {
+      const history = await readLocked(sessionKey);
+      history.push({ role: 'user', content });
       const trimmed = truncateHistory(history, maxHistory, maxTokens);
       history.length = 0;
       history.push(...trimmed);
@@ -63,7 +78,7 @@ function createHistoryStore({ dataDir, maxHistory = 8, maxTokens = 6000, maxCach
 
   function invalidate(sessionKey) { cache.delete(sessionKey); }
 
-  return { load, save, append, clear, invalidate, _cache: cache };
+  return { load, save, append, appendUser, clear, invalidate, _cache: cache };
 }
 
 // Cached JSON store (model/personality prefs).

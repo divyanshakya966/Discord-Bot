@@ -1,5 +1,11 @@
 # Changelog - Premium Features Release
 
+## Version 2.5.0 - Group discussion mode
+
+- `/group on|off|status|clear` (slash + prefix + mention): opt a channel into one shared history file (`group_<channel>.json`) instead of per-user memory. Chatter is recorded silently with author tags; mentions, replies, `/ask`, `/code`, `/research` and Retry/Continue answer from the shared context.
+- Model, personality, cooldowns and Retry memory stay per-user; `/clear` and `/export` stay personal; toggling/wiping needs Manage Channels. DMs are excluded (already 1:1).
+- Discussion entries are tagged by server display name (sanitized against history forgery); Retry/Continue/Clear buttons are clicker-scoped, so nobody can trigger them on another user's behalf.
+
 ## Version 2.4.0 - Paged replies, Discord-safe markdown, complete outputs
 
 - Long AI answers now arrive as ONE paged message with ◀ Prev / Next ▶ buttons (`src/discord/pagination.js`, 30-min sessions) instead of N follow-up messages flooding the channel; `/code`, `/research`, Retry/Continue, and `/export md` all page the same way.

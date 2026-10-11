@@ -13,6 +13,7 @@ A Discord chatbot built with Discord.js and the official OpenRouter SDK — now 
 - Discord-safe markdown (no raw tables/HTML/LaTeX) + auto-continued complete answers within the output token budget
 - Embeds + buttons (Retry / Continue / Clear) + autocomplete for models/personalities
 - Code analysis mode, research mode (cached web search), `/stats`, `/export`
+- Group discussion mode (`/group on`): one shared memory per channel, answers draw on everyone's messages
 - Cooldowns + input caps to protect API quota; structured logs; graceful shutdown
 
 ## Commands
@@ -30,6 +31,12 @@ A Discord chatbot built with Discord.js and the official OpenRouter SDK — now 
 - `/model set model:<id>` - Switch model; accepts any valid OpenRouter ID (custom IDs allowed)
 - `/model current` - Show current model
 - `/personality list` / `/personality set name:<name>` / `/personality current`
+
+### Group discussion (shared memory per channel)
+- `/group on` - Remember everyone's messages in this channel (needs Manage Channels)
+- `/group status` - Show mode + saved message count · `/group off` · `/group clear` (wipe shared history, mods only)
+
+**How it works:** in a group channel the bot silently records discussion (tagged by each member's server display name) and answers mentions/replies/`/ask` from the shared history (one `group_<channel>.json` file). Model, personality, cooldowns and Retry memory stay per-user; `/clear` and `/export` stay personal. Retry/Continue/Clear buttons always act on the clicker's own session — nobody can trigger them on another user's behalf.
 
 **Models:** Nemotron 3 Super (Free, default — zero cost), Auto Free Router, Gemma 4 26B (Free), Llama 3.1 70B, Mistral Large, GPT-4 Turbo, Claude 3.5 Sonnet (+ legacy MythoMax for old prefs). If your model dies, the bot auto-falls-back to the default once.
 **Personalities:** Standard, Code Analyzer, Researcher, Creative, Tutor, **Girl** (`girl` — loving, playfully seductive, tasteful PG-13 by default).

@@ -1,5 +1,5 @@
 const path = require('path');
-const { Client, GatewayIntentBits, Partials, Events, AttachmentBuilder, MessageFlags } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, Events, AttachmentBuilder, MessageFlags, PermissionsBitField } = require('discord.js');
 
 const { CONFIG, validateOrExit } = require('./src/config');
 const logger = require('./src/logger');
@@ -50,6 +50,7 @@ const historyStore = createHistoryStore({ dataDir: DATA_DIR, maxHistory: CONFIG.
 const modelPrefs = createJsonStore('model_preferences.json', { dataDir: DATA_DIR });
 const personalityPrefs = createJsonStore('personality_preferences.json', { dataDir: DATA_DIR });
 const customPersonalityStore = createJsonStore('personalities.json', { dataDir: DATA_DIR });
+const groupChannels = createJsonStore('group_channels.json', { dataDir: DATA_DIR });
 
 // ---------- Stats ----------
 const stats = { startTime: Date.now(), totalRequests: 0, totalErrors: 0, totalLatencyMs: 0 };
@@ -107,6 +108,57 @@ async function setSessionPersonality(source, name) {
   if (!personalities[key]) throw new Error(`Personality not found: ${key}`);
   await personalityPrefs.set(getPersonalityKey(source), key);
   return { key, ...personalities[key] };
+}
+
+// ---------- Group discussion mode ----------
+// One shared history file per enabled channel: every participant's messages
+// land in group:<channelId>, and replies are answered from that shared
+// context. DMs never qualify (already 1:1). Model, personality, cooldown
+// and retry memory stay per-user — only the conversation memory is shared.
+function getGroupHistoryKey(channelId) {
+  return `group:${channelId}`;
+}
+
+async function isGroupChannel(channelId) {
+  if (!channelId) return false;
+  const all = await groupChannels.load();
+  return !!all[channelId];
+}
+
+async function setGroupChannel(channelId, on) {
+  const all = await groupChannels.load();
+  if (on) all[channelId] = { on: true, at: Date.now() };
+  else delete all[channelId];
+  await groupChannels.save(all);
+}
+
+async function resolveHistoryKey(source) {
+  const personal = getSessionKey(source);
+  const channelId = source?.channelId;
+  if (!source?.guildId || !channelId) return personal;
+  if (await isGroupChannel(channelId)) return getGroupHistoryKey(channelId);
+  return personal;
+}
+
+function canManageGroup(replyMode) {
+  if (replyMode.kind === 'message') {
+    return !!replyMode.message.member?.permissions?.has?.(PermissionsBitField.Flags.ManageChannels);
+  }
+  return !!replyMode.interaction.memberPermissions?.has?.(PermissionsBitField.Flags.ManageChannels);
+}
+
+function resolveAuthorTag(message) {
+  const raw = message.member?.displayName || message.author?.username || message.author?.id || 'user';
+  return String(raw).replace(/[\r\n\t]+/g, ' ').trim().slice(0, 32) || 'user';
+}
+
+async function observeGroupMessage(message) {
+  let text = message.content?.trim() || '';
+  if (message.attachments?.size) {
+    text = (await collectAttachmentContext(message, text || '(shared attachments, no text)')).prompt;
+  }
+  if (!text) return;
+  await historyStore.appendUser(getGroupHistoryKey(message.channelId), `${resolveAuthorTag(message)}: ${trimToCompleteChars(text, 2000)}`);
 }
 
 function checkCooldown(source, label = 'request') {
@@ -367,7 +419,8 @@ async function runChat({ source, channel, userPrompt, replyMode }) {
 
   const sessionKey = getSessionKey(source);
   rememberPrompt(sessionKey, userPrompt);
-  const history = await historyStore.load(sessionKey);
+  const historyKey = await resolveHistoryKey(source);
+  const history = await historyStore.load(historyKey);
   const sessionModel = await getSessionModel(source);
   const modelMessages = await buildModelMessages(source, history, userPrompt);
 
@@ -391,7 +444,7 @@ async function runChat({ source, channel, userPrompt, replyMode }) {
     const ms = Date.now() - t0;
     trackRequest(ms, false);
     log.info('AI reply', { model: usedModel, ms, tokens: normalizeUsage(usage) });
-    await historyStore.append(sessionKey, userPrompt, assistantReply);
+    await historyStore.append(historyKey, userPrompt, assistantReply);
 
     return sendPagedAIReply(replyMode, assistantReply);
   } catch (error) {
@@ -434,6 +487,52 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
     const pers = await getSessionPersonality(source);
     await replyEmbedOrText(replyMode, infoEmbed('📊 Your Settings',
       `Model: \`${model}\`\nPersonality: **${pers.name}** (\`${pers.key}\`)`));
+    return;
+  }
+  if (command === 'group') {
+    const [sub] = (prompt || '').split(/\s+/).filter(Boolean);
+    const channelId = source?.channelId;
+    if (!source?.guildId || !channelId) {
+      const msg = 'Group mode is for server channels — DMs already keep your history privately.';
+      if (replyMode.kind === 'message') await safeReplyToMessage(replyMode.message, msg);
+      else await safeEditReply(replyMode.interaction, msg);
+      return;
+    }
+    if (!sub || sub === 'status') {
+      const on = await isGroupChannel(channelId);
+      const hist = on ? await historyStore.load(getGroupHistoryKey(channelId)) : [];
+      const turns = hist.filter(m => m.role === 'user').length;
+      await replyEmbedOrText(replyMode, infoEmbed('👥 Group Mode',
+        on ? `**ON** — I remember this channel's whole discussion (${turns} messages saved, shared by everyone here).\nMention me, reply to me, or use \`/ask\` and I'll answer from it.\n\`/clear\` still wipes only your private memory; mods can \`/group clear\`.`
+          : '**OFF** — I only remember each user separately here.\nA moderator can enable shared discussion memory with `/group on`.'));
+      return;
+    }
+    if (['on', 'off', 'clear'].includes(sub)) {
+      if (!canManageGroup(replyMode)) {
+        const msg = 'You need the **Manage Channels** permission to change group mode. Anyone can check `/group status`.';
+        if (replyMode.kind === 'message') await safeReplyToMessage(replyMode.message, msg);
+        else await safeEditReply(replyMode.interaction, msg);
+        return;
+      }
+      if (sub === 'on') {
+        await setGroupChannel(channelId, true);
+        await replyEmbedOrText(replyMode, infoEmbed('👥 Group Mode ON',
+          'From now I remember **everyone\'s** messages in this channel in one shared history and answer from it.\nMention me, reply to me, or use `/ask` to chat.\nYour model, personality, cooldown and Retry memory stay personal.'));
+        return;
+      }
+      if (sub === 'off') {
+        await setGroupChannel(channelId, false);
+        await replyEmbedOrText(replyMode, infoEmbed('👥 Group Mode OFF',
+          'Back to per-user memory. The saved discussion is kept — `/group on` resumes it, `/group clear` wipes it.'));
+        return;
+      }
+      await historyStore.clear(getGroupHistoryKey(channelId));
+      await replyEmbedOrText(replyMode, infoEmbed('👥 Group History Cleared', 'The shared discussion memory for this channel was wiped.'));
+      return;
+    }
+    const msg = `Usage: \`${COMMAND_PREFIX}group <on|off|status|clear>\``;
+    if (replyMode.kind === 'message') await safeReplyToMessage(replyMode.message, msg);
+    else await safeEditReply(replyMode.interaction, msg);
     return;
   }
   if (command === 'export') {
@@ -542,7 +641,8 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
     const personalities = await loadPersonalities();
     const analyzer = personalities['code-analyzer'];
     const sessionKey = getSessionKey(source);
-    const history = await historyStore.load(sessionKey);
+    const historyKey = await resolveHistoryKey(source);
+    const history = await historyStore.load(historyKey);
     const sessionModel = await getSessionModel(source);
     const messages = [
       { role: 'system', content: buildSystemPrompt(analyzer.prompt) },
@@ -562,7 +662,7 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
     try {
       const { text: analysis } = await queryOpenRouter(messages, sessionModel);
       trackRequest(Date.now() - t0, false);
-      await historyStore.append(sessionKey, `Code Analysis: ${prompt.slice(0, 120)}`, analysis);
+      await historyStore.append(historyKey, `Code Analysis: ${prompt.slice(0, 120)}`, analysis);
       await sendPagedAIReply(replyMode, analysis);
     } catch (e) {
       trackRequest(Date.now() - t0, true);
@@ -588,7 +688,8 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
     const personalities = await loadPersonalities();
     const researcher = personalities.researcher;
     const sessionKey = getSessionKey(source);
-    const history = await historyStore.load(sessionKey);
+    const historyKey = await resolveHistoryKey(source);
+    const history = await historyStore.load(historyKey);
     const sessionModel = await getSessionModel(source);
     const cd = checkCooldown(source, 'research');
     if (!cd.allowed) {
@@ -610,7 +711,7 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
       ];
       const { text: research } = await queryOpenRouter(messages, sessionModel);
       trackRequest(Date.now() - t0, false);
-      await historyStore.append(sessionKey, `Research: ${prompt}`, research);
+      await historyStore.append(historyKey, `Research: ${prompt}`, research);
       await sendPagedAIReply(replyMode, research);
     } catch (e) {
       trackRequest(Date.now() - t0, true);
@@ -671,6 +772,10 @@ async function handleSlashCommand(interaction) {
     await handleCommand(source, channel, 'export', interaction.options.getString('format') || 'json', replyMode);
     return;
   }
+  if (command === 'group') {
+    await handleCommand(source, channel, 'group', interaction.options.getSubcommand(), replyMode);
+    return;
+  }
   if (['help', 'ping', 'clear', 'stats'].includes(command)) {
     await handleCommand(source, channel, command, '', replyMode);
     return;
@@ -726,13 +831,14 @@ async function handleButton(interaction) {
   const prompt = interaction.customId === 'continue'
     ? CONTINUE_PROMPT
     : last;
-  const history = await historyStore.load(sessionKey);
+  const historyKey = await resolveHistoryKey(source);
+  const history = await historyStore.load(historyKey);
   const sessionModel = await getSessionModel(source);
   const modelMessages = await buildModelMessages(source, history, prompt);
   const stopTyping = startTypingLoop(channel);
   try {
     const { text: reply } = await queryOpenRouter(modelMessages, sessionModel);
-    await historyStore.append(sessionKey, prompt, reply);
+    await historyStore.append(historyKey, prompt, reply);
     await sendPagedFollowUp(interaction, reply);
   } catch (e) {
     await interaction.followUp({ embeds: [errorEmbed((e?.message || 'Failed').slice(0, 500))], flags: MessageFlags.Ephemeral }).catch(() => {});
@@ -793,7 +899,15 @@ client.on(Events.MessageCreate, async message => {
         }
       }
     }
-    if (!shouldRespond(message)) return;
+    if (!shouldRespond(message)) {
+      // Group discussion: silently record chatter into the shared history so
+      // later answers draw on what everyone said. Replies still need a
+      // mention, reply-to-bot, or command — observing never answers by itself.
+      if (message.guildId && message.channelId && await isGroupChannel(message.channelId)) {
+        await observeGroupMessage(message).catch(() => {});
+      }
+      return;
+    }
     const missing = getMissingPermissions(message.channel, client.user);
     if (missing.length) {
       await message.reply({ content: missingToUserText(missing), allowedMentions: NO_PING }).catch(() => {});
@@ -932,4 +1046,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { client, handleCommand, handleButton, handleSlashCommand, handleAutocomplete, runChat, getSessionModel, getSessionPersonality, queryOpenRouter, sendPagedAIReply, sendPagedFollowUp, getEffectiveMaxTokens, lastPromptBySession, pruneOldHistories, resolveReplyTarget, CONTINUE_PROMPT, MAX_AUTO_CONTINUATIONS, AUTO_CONTINUE_CHAR_BUDGET };
+module.exports = { client, handleCommand, handleButton, handleSlashCommand, handleAutocomplete, runChat, getSessionModel, getSessionPersonality, queryOpenRouter, sendPagedAIReply, sendPagedFollowUp, getEffectiveMaxTokens, lastPromptBySession, pruneOldHistories, resolveReplyTarget, isGroupChannel, setGroupChannel, getGroupHistoryKey, resolveHistoryKey, resolveAuthorTag, CONTINUE_PROMPT, MAX_AUTO_CONTINUATIONS, AUTO_CONTINUE_CHAR_BUDGET };

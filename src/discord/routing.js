@@ -1,4 +1,4 @@
-const KNOWN = ['help', 'ping', 'clear', 'stats', 'export', 'ask', 'model', 'personality', 'code', 'research'];
+const KNOWN = ['help', 'ping', 'clear', 'stats', 'export', 'ask', 'group', 'model', 'personality', 'code', 'research'];
 
 function normalizeInput(text) {
   return String(text || '').trim().replace(/^[/!]+/, '').trim();
@@ -14,7 +14,7 @@ function parseMentionCommand(text) {
     return { command: first, prompt: '' };
   }
   const rest = clean.slice(first.length).trim();
-  if (['ask', 'model', 'personality', 'code', 'research', 'export'].includes(first)) {
+  if (['ask', 'model', 'personality', 'code', 'research', 'export', 'group'].includes(first)) {
     return { command: first, prompt: rest };
   }
   return null;

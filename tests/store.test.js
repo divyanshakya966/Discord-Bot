@@ -45,6 +45,16 @@ test('history cache is bounded and reloads evicted sessions from disk', async ()
   assert.deepEqual(h, [{ role: 'user', content: 'q0' }, { role: 'assistant', content: 'a0' }]);
 });
 
+test('appendUser stores a lone observer entry and trims', async () => {
+  const dir = await tmpDir();
+  const store = createHistoryStore({ dataDir: dir, maxHistory: 2, maxTokens: 100000 });
+  await store.append('group:c1', 'alice: hi all', 'Hello Alice!');
+  await store.appendUser('group:c1', 'bob: hey there');
+  const h = await store.load('group:c1');
+  assert.deepEqual(h[h.length - 1], { role: 'user', content: 'bob: hey there' });
+  assert.ok(h.length <= 4);
+});
+
 test('safeReply splits long content', async () => {
   const { splitCodeSafe } = require('../src/utils/splitMessage');
   const chunks = splitCodeSafe('y'.repeat(5000));

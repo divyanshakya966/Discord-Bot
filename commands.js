@@ -39,6 +39,13 @@ const slashCommands = [
         .addStringOption(o => o.setName('name').setDescription('Personality').setRequired(true).setAutocomplete(true))
     ),
   new SlashCommandBuilder()
+    .setName('group')
+    .setDescription('Shared group-discussion memory for this channel')
+    .addSubcommand(s => s.setName('on').setDescription('Enable shared history in this channel'))
+    .addSubcommand(s => s.setName('off').setDescription('Disable shared history in this channel'))
+    .addSubcommand(s => s.setName('status').setDescription('Show group mode status'))
+    .addSubcommand(s => s.setName('clear').setDescription('Wipe the shared history for this channel')),
+  new SlashCommandBuilder()
     .setName('code')
     .setDescription('Analyze code with the expert code mode')
     .addStringOption(option =>
