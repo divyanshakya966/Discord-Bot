@@ -500,7 +500,7 @@ test('resolveHistoryKey prefers shared file in group channels only', async () =>
   }
 });
 
-test('group chatter is observed silently; mentions still answer once', async () => {
+test('group chatter is ignored; mentions still answer once', async () => {
   await bot.setGroupChannel('ch-gobs', true);
   const savedUser = bot.client.user;
   bot.client.user = { id: 'bot123' };
@@ -525,9 +525,7 @@ test('group chatter is observed silently; mentions still answer once', async () 
       const { createHistoryStore } = require('../src/store/historyStore');
       const store = createHistoryStore({ dataDir: process.env.DATA_DIR, maxHistory: 50, maxTokens: 1000000 });
       const hist = await store.load('group:ch-gobs');
-      assert.equal(hist.filter(m => m.role === 'user').length, 2);
-      assert.ok(hist.some(m => m.content.startsWith('alice:')));
-      assert.ok(hist.some(m => m.content.startsWith('bob:')));
+      assert.equal(hist.filter(m => m.role === 'user').length, 0);
 
       const mention = { ...mkObs('carol', 'hey, thoughts?'), mentions: { repliedUser: null, has: () => true } };
       mention.channel.permissionsFor = () => ({ has: () => true });
@@ -536,7 +534,7 @@ test('group chatter is observed silently; mentions still answer once', async () 
       assert.equal(sent.length, 1, 'mention answers exactly once');
       assert.match(sent[0].content, /not configured/);
       const hist2 = await store.load('group:ch-gobs');
-      assert.equal(hist2.filter(m => m.role === 'user').length, 2, 'no observer duplicate on replies');
+      assert.equal(hist2.filter(m => m.role === 'user').length, 0, 'unconfigured mention must not create a history entry');
     });
   } finally {
     bot.client.user = savedUser;

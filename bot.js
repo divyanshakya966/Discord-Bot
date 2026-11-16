@@ -153,10 +153,10 @@ async function setSessionPersonality(source, name) {
 }
 
 // ---------- Group discussion mode ----------
-// One shared history file per enabled channel: every participant's messages
-// land in group:<channelId>, and replies are answered from that shared
-// context. DMs never qualify (already 1:1). Model, personality, cooldown
-// and retry memory stay per-user — only the conversation memory is shared.
+// One shared history file per enabled channel: only messages that invoke the
+// bot are stored in group:<channelId>. DMs never qualify (already 1:1).
+// Model, personality, cooldown and retry memory stay per-user — only the
+// conversation memory is shared.
 function getGroupHistoryKey(channelId) {
   return `group:${channelId}`;
 }
@@ -209,15 +209,6 @@ function formatHistoryEntry(source, text, historyKey) {
   return `${resolveAuthorTag(source)}: ${text}`;
 }
 
-async function observeGroupMessage(message) {
-  let text = message.content?.trim() || '';
-  if (message.attachments?.size) {
-    text = (await collectAttachmentContext(message, text || '(shared attachments, no text)')).prompt;
-  }
-  if (!text) return;
-  await historyStore.appendUser(getGroupHistoryKey(message.channelId), `${resolveAuthorTag(message)}: ${trimToCompleteChars(text, 2000)}`);
-}
-
 function checkCooldown(source, label = 'request') {
   const key = `${label}:${getSessionKey(source)}`;
   const r = cooldowns.check(key);
@@ -245,7 +236,8 @@ async function replyNotConfigured(replyMode) {
 }
 
 // ---------- Paged AI replies ----------
-// One paged message per answer (Prev/Next buttons, no channel flood); the payload builder also sanitizes markdown.
+// One paged message per answer (Prev/Next buttons for long replies, no channel flood);
+// the payload builder also sanitizes markdown.
 async function getReplyActionRow(source) {
   const personality = await getSessionPersonality(source);
   return personality.key === 'girl' ? null : actionRowForReply();
@@ -747,7 +739,7 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
       if (sub === 'on') {
         await setGroupChannel(channelId, true);
         await replyEmbedOrText(replyMode, infoEmbed('👥 Group Mode ON',
-          'From now I remember **everyone\'s** messages in this channel in one shared history and answer from it.\nMention me, reply to me, or use `/ask` to chat.\nYour model, personality, cooldown and Retry memory stay personal.'));
+          'From now I remember only messages sent to me in this channel in one shared history.\nMention me, reply to me, or use `/ask` to chat; unrelated channel messages are ignored.\nYour model, personality, cooldown and Retry memory stay personal.'));
         return;
       }
       if (sub === 'off') {
@@ -1072,12 +1064,11 @@ async function handleButton(interaction) {
   const history = await historyStore.load(historyKey);
   const sessionModel = await getSessionModel(source);
   const modelMessages = await buildModelMessages(source, history, prompt, sessionModel);
-  const actionRow = await getReplyActionRow(source);
   const stopTyping = startTypingLoop(channel);
   try {
     const { text: reply } = await queryOpenRouter(modelMessages, sessionModel);
     await historyStore.append(historyKey, formatHistoryEntry(source, prompt, historyKey), reply);
-    await sendPagedFollowUp(interaction, reply, actionRow);
+    await sendPagedFollowUp(interaction, reply, await getReplyActionRow(source));
   } catch (e) {
     await interaction.followUp({ embeds: [errorEmbed((e?.message || 'Failed').slice(0, 500))], flags: MessageFlags.Ephemeral }).catch(() => {});
   } finally {
@@ -1138,12 +1129,6 @@ client.on(Events.MessageCreate, async message => {
       }
     }
     if (!shouldRespond(message)) {
-      // Group discussion: silently record chatter into the shared history so
-      // later answers draw on what everyone said. Replies still need a
-      // mention, reply-to-bot, or command — observing never answers by itself.
-      if (message.guildId && message.channelId && await isGroupChannel(message.channelId)) {
-        await observeGroupMessage(message).catch(() => {});
-      }
       return;
     }
     const missing = getMissingPermissions(message.channel, client.user);

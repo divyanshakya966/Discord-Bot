@@ -140,11 +140,9 @@ async function handlePaginationButton(interaction) {
   else index = Math.min(session.pages.length - 1, index + 1);
   session.cursor = index;
 
-  const { actionRowForReply } = require('./embeds');
   const content = buildPageContent(session.pages, index);
-  const components = session.pages.length > 1
-    ? [paginationRow(id, index, session.pages.length), actionRowForReply()]
-    : [actionRowForReply()];
+  const components = [paginationRow(id, index, session.pages.length)];
+  if (session.actionRow) components.push(session.actionRow);
   try {
     await interaction.update({ content, components, allowedMentions: { parse: [] } });
   } catch {}
@@ -153,19 +151,28 @@ async function handlePaginationButton(interaction) {
 
 /**
  * Build the initial paged payload for a fresh AI answer.
- * Single-page answers get just the action row (no pager).
+ * Single-page answers get the optional action row; long answers prepend pagination controls.
  * @returns {{ content: string, components: ActionRowBuilder[], paginatorId: string|null, pages: string[] }}
- */function buildInitialPagedPayload(rawText, actionRow, opts = {}) {
+ */
+function buildInitialPagedPayload(rawText, actionRow, opts = {}) {
   const pages = paginateText(rawText, opts);
   if (pages.length <= 1) {
-    return { content: pages[0], components: actionRow ? [actionRow] : [], paginatorId: null, pages };
+    return { content: pages[0], components: [], paginatorId: null, pages };
   }
   const id = createPagedSession(pages);
   const session = sessions.get(id);
-  if (session) session.cursor = 0;
+  if (session) {
+    session.cursor = 0;
+    session.actionRow = actionRow || null;
+  }
   const components = [paginationRow(id, 0, pages.length)];
   if (actionRow) components.push(actionRow);
-  return { content: buildPageContent(pages, 0), components, paginatorId: id, pages };
+  return {
+    content: buildPageContent(pages, 0),
+    components,
+    paginatorId: id,
+    pages,
+  };
 }
 
 module.exports = {

@@ -9,9 +9,15 @@ test('short text is single page without pager', () => {
   assert.equal(p.paginatorId, null);
 });
 
+test('short text keeps the personality action row when provided', () => {
+  const actionRow = { customId: 'legacy-action-row' };
+  const p = buildInitialPagedPayload('hello', actionRow);
+  assert.deepEqual(p.components, [actionRow]);
+});
+
 test('long text paginates with pager row and no footer line', () => {
   const long = 'word '.repeat(1200); // ~6000 chars
-  const p = buildInitialPagedPayload(long, null);
+  const p = buildInitialPagedPayload(long, { customId: 'legacy-action-row' });
   assert.ok(p.pages.length > 1);
   assert.ok(p.paginatorId);
   assert.equal(p.components.length, 1);

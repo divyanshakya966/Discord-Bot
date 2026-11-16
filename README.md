@@ -34,10 +34,10 @@ A Discord chatbot built with Discord.js, a local Ollama provider, and an optiona
 - `/personality list` / `/personality set name:<name>` / `/personality current`
 
 ### Group discussion (shared memory per channel)
-- `/group on` - Remember everyone's messages in this channel (needs Manage Channels, or bot owner via `BOT_OWNER_IDS`)
+- `/group on` - Share history for messages sent to the bot in this channel (needs Manage Channels, or bot owner via `BOT_OWNER_IDS`)
 - `/group status` - Show mode + saved message count · `/group off` · `/group clear` (wipe shared history, mods only)
 
-**How it works:** in a group channel the bot silently records discussion and answers mentions/replies/`/ask` from the shared history (one `group_<channel>.json` file) — every turn, chatter and answers alike, is tagged by its author's server display name. Model, personality, cooldowns and Retry memory stay per-user; `/clear` and `/export` stay personal. Retry/Continue/Clear buttons always act on the clicker's own session — nobody can trigger them on another user's behalf.
+**How it works:** in a group channel the bot only records messages that invoke it through a mention, reply, prefix command, or `/ask` (one `group_<channel>.json` file). Each stored turn is tagged by its author's server display name; unrelated channel chatter is ignored. Model, personality and cooldowns stay per-user; `/clear` and `/export` stay personal. Retry/Continue/Clear buttons act on the clicker's own session.
 
 **Local models (Ollama, default):** Llama 3.2 3B (general, default — ~2 GB), Qwen3 4B (reasoning/creative), Qwen3 1.7B (fast), Qwen2.5 Coder 7B Lite (code). The bot talks to `http://127.0.0.1:11434/v1`; start it with `ollama serve` and pull models with `ollama pull <name>`.
 **Remote models (optional fallback):** Nemotron 3 Super (Free), Auto Free Router, Gemma 4 26B (Free), Llama 3.1 70B, Mistral Large, GPT-4 Turbo, Claude 3.5 Sonnet (+ legacy MythoMax). These are used only if the local model fails or a user explicitly selects one.
