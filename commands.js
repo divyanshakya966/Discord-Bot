@@ -27,7 +27,7 @@ const slashCommands = [
     .addSubcommand(s => s.setName('current').setDescription('Show the current AI model'))
     .addSubcommand(s =>
       s.setName('set').setDescription('Switch to a specific model')
-        .addStringOption(o => o.setName('model').setDescription('Model (autocomplete, or any OpenRouter ID)').setRequired(true).setAutocomplete(true))
+        .addStringOption(o => o.setName('model').setDescription('Model (local Ollama or OpenRouter ID)').setRequired(true).setAutocomplete(true))
     ),
   new SlashCommandBuilder()
     .setName('personality')

@@ -27,9 +27,25 @@ function infoEmbed(title, text) {
   return new EmbedBuilder().setTitle(title).setDescription(String(text).slice(0, 3500)).setColor(0x57f287).setTimestamp();
 }
 
+function modelLines(models) {
+  return models.map(m => `• **${m.name}** — \`${m.id}\``).join('\n').slice(0, 1024) || 'None configured.';
+}
+
 function modelListEmbed(models) {
-  const desc = models.map(m => `• **${m.name}** — \`${m.id}\``).join('\n').slice(0, 3500);
-  return baseEmbed('🧠 Available Models', desc || 'No models configured.');
+  const local = models.filter(m => m.provider === 'ollama');
+  const remote = models.filter(m => m.provider === 'openrouter');
+  const other = models.filter(m => m.provider && m.provider !== 'ollama' && m.provider !== 'openrouter');
+
+  if (!local.length && !remote.length && !other.length) {
+    const desc = models.map(m => `• **${m.name}** — \`${m.id}\``).join('\n').slice(0, 3500);
+    return baseEmbed('🧠 Available Models', desc || 'No models configured.');
+  }
+
+  const embed = baseEmbed('🧠 Available Models', 'Pick one with `/model set <id>`.');
+  if (local.length) embed.addFields({ name: '🖥️ Local · Ollama', value: modelLines(local) });
+  if (remote.length) embed.addFields({ name: '☁️ Remote · OpenRouter (optional)', value: modelLines(remote) });
+  if (other.length) embed.addFields({ name: 'Other', value: modelLines(other) });
+  return embed;
 }
 
 function personalityListEmbed(personalities, hiddenKeys) {

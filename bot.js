@@ -3,7 +3,9 @@ const { Client, GatewayIntentBits, Partials, Events, AttachmentBuilder, MessageF
 
 const { CONFIG, validateOrExit } = require('./src/config');
 const logger = require('./src/logger');
-const { AVAILABLE_MODELS, DEFAULT_PERSONALITIES, RETIRED_MODEL_IDS } = require('./bot-data');
+const {
+  AVAILABLE_MODELS, DEFAULT_PERSONALITIES, RETIRED_MODEL_IDS, getModelEntry, resolveModelProvider,
+} = require('./bot-data');
 const { getSessionKey, getModelKey, getPersonalityKey } = require('./src/store/sessions');
 const { createHistoryStore, createJsonStore } = require('./src/store/historyStore');
 const { ensureDir } = require('./src/store/atomic');
@@ -12,8 +14,6 @@ const { safeReplyToMessage, safeEditReply } = require('./src/utils/safeReply');
 const {
   extractProviderErrorMessage,
   isLikelyParameterCompatibilityError,
-  isModelUnavailableError,
-  isAuthError,
   describeProviderError,
   toUserFacingProviderError,
 } = require('./src/ai/errors');
@@ -25,6 +25,9 @@ const { parseMentionCommand, parsePrefixCommand } = require('./src/discord/routi
 const { getMissingPermissions, missingToUserText } = require('./src/discord/permissions');
 const { collectAttachmentContext } = require('./src/discord/attachments');
 const { buildSystemPrompt } = require('./src/ai/systemPrompt');
+const {
+  openLocalChatStream, checkLocalHealth, isLocalConnectionError, localUnavailableMessage,
+} = require('./src/ai/localProvider');
 const {
   helpEmbed, errorEmbed, infoEmbed, modelListEmbed, personalityListEmbed, actionRowForReply, guildWelcomeEmbed,
 } = require('./src/discord/embeds');
@@ -77,17 +80,27 @@ async function getSessionModel(source) {
     stored = RETIRED_MODEL_IDS[stored];
     await modelPrefs.set(key, stored);
   }
-  if (stored && (AVAILABLE_MODELS.some(m => m.id === stored) || isValidCustomModelId(stored))) return stored;
-  return CONFIG.OPENROUTER_MODEL;
+  if (stored) {
+    const target = resolveModelProvider(stored, CONFIG.LOCAL_MODEL);
+    const canonical = target && getModelEntry(target.id);
+    if (canonical && canonical.id !== stored) {
+      stored = canonical.id;
+      await modelPrefs.set(key, stored);
+    }
+  }
+  if (stored && (getModelEntry(stored) || isValidCustomModelId(stored))) return stored;
+  return CONFIG.DEFAULT_MODEL;
 }
 
 async function setSessionModel(source, modelId) {
   const id = String(modelId || '').trim();
-  const known = AVAILABLE_MODELS.find(m => m.id === id);
+  const target = resolveModelProvider(id, CONFIG.LOCAL_MODEL);
+  const known = getModelEntry(id) || (target && getModelEntry(target.id));
   if (!known && !isValidCustomModelId(id)) throw new Error(`Unknown model "${id}". Use /model list to see options.`);
+  const stored = known ? known.id : id;
   const key = getModelKey(source);
-  await modelPrefs.set(key, id);
-  return known || { id, name: id };
+  await modelPrefs.set(key, stored);
+  return known || { id: stored, name: stored };
 }
 
 async function getSessionPersonality(source) {
@@ -107,7 +120,20 @@ async function setSessionPersonality(source, name) {
   if (key === 'girl-text' || key === 'casual') key = 'girl';
   if (!personalities[key]) throw new Error(`Personality not found: ${key}`);
   await personalityPrefs.set(getPersonalityKey(source), key);
-  return { key, ...personalities[key] };
+
+  // Each personality ships with a local model tuned for it. Selecting a
+  // personality also selects that model; /model set can still override it.
+  const personality = personalities[key];
+  let switchedModel = null;
+  if (personality.model) {
+    const target = resolveModelProvider(personality.model, CONFIG.LOCAL_MODEL);
+    const known = target && getModelEntry(target.id);
+    if (known) {
+      await modelPrefs.set(getModelKey(source), known.id);
+      switchedModel = known;
+    }
+  }
+  return { key, ...personality, switchedModel };
 }
 
 // ---------- Group discussion mode ----------
@@ -218,7 +244,7 @@ async function sendPagedFollowUp(interaction, rawText) {
   await interaction.followUp({ content: payload.content, allowedMentions: NO_PING, components: payload.components });
 }
 
-// ---------- OpenRouter ----------
+// ---------- AI providers ----------
 async function getOpenRouterClient() {
   if (!openRouterClientPromise) {
     openRouterClientPromise = import('@openrouter/sdk').then(({ OpenRouter }) => {
@@ -233,9 +259,22 @@ async function getOpenRouterClient() {
   return openRouterClientPromise;
 }
 
+function hasAIProvider() {
+  return !!(CONFIG.LOCAL_MODEL || CONFIG.OPENROUTER_API_KEY);
+}
+
+async function localProviderStatusLine() {
+  if (!CONFIG.LOCAL_MODEL) return 'Local AI: not configured';
+  const health = await checkLocalHealth({ baseUrl: CONFIG.LOCAL_BASE_URL });
+  if (!health.ok) return 'Local AI: offline — start Ollama with `ollama serve`';
+  const wanted = String(CONFIG.LOCAL_MODEL).replace(/^ollama\//, '');
+  const listed = health.models.includes(wanted);
+  return `Local AI: online · ${wanted}${listed ? '' : ' (not listed)'}`;
+}
+
 // Streams chat completions for message + slash paths; auto-continues
-// length-truncated outputs. Falls back to the default model once when the
-// session model is unavailable (retired slug, no route, key has no access).
+// length-truncated outputs. Falls back across providers when a model is
+// unavailable (Ollama offline/unknown model, OpenRouter quota/auth/route).
 const {
   CONTINUE_PROMPT,
   MAX_AUTO_CONTINUATIONS,
@@ -246,38 +285,82 @@ const {
 } = require('./src/ai/completion');
 
 function getEffectiveMaxTokens(modelId) {
-  const known = AVAILABLE_MODELS.find(m => m.id === modelId);
+  const known = getModelEntry(modelId) || getModelEntry(resolveModelProvider(modelId, CONFIG.LOCAL_MODEL)?.id);
   const cap = known?.maxTokens;
   if (Number.isFinite(cap) && cap > 0) return Math.min(CONFIG.MAX_TOKENS, cap);
   return CONFIG.MAX_TOKENS;
 }
 
+function resolvePrimaryModel(modelId) {
+  return resolveModelProvider(modelId || CONFIG.DEFAULT_MODEL, CONFIG.LOCAL_MODEL)
+    || resolveModelProvider(CONFIG.OPENROUTER_MODEL, CONFIG.LOCAL_MODEL);
+}
+
+function getFallbackTargets(primary) {
+  const targets = [];
+  const add = (id) => {
+    const target = resolveModelProvider(id, CONFIG.LOCAL_MODEL);
+    if (!target || target.id === primary.id) return;
+    if (target.provider === 'ollama' && !CONFIG.LOCAL_MODEL) return;
+    if (target.provider === 'openrouter' && !CONFIG.OPENROUTER_API_KEY) return;
+    if (!targets.some(t => t.id === target.id)) targets.push(target);
+  };
+
+  if (primary.provider === 'ollama') {
+    if (CONFIG.OPENROUTER_API_KEY) add(CONFIG.OPENROUTER_MODEL);
+  } else {
+    if (CONFIG.LOCAL_MODEL) add(`ollama/${CONFIG.LOCAL_MODEL}`);
+    if (CONFIG.OPENROUTER_API_KEY) add(CONFIG.OPENROUTER_MODEL);
+  }
+  return targets;
+}
+
 async function queryOpenRouter(messages, modelId, onChunk) {
-  const openrouter = await getOpenRouterClient();
-  const model = modelId || CONFIG.OPENROUTER_MODEL;
+  const primary = resolvePrimaryModel(modelId);
+  const model = primary.id;
 
   async function attempt(current, msgs = messages) {
-    const maxTokens = getEffectiveMaxTokens(current);
-    const base = { model: current, messages: msgs, maxTokens, temperature: CONFIG.TEMPERATURE, stream: true };
-    const rich = { ...base, topP: CONFIG.TOP_P, frequencyPenalty: CONFIG.FREQUENCY_PENALTY, presencePenalty: CONFIG.PRESENCE_PENALTY };
-
-    async function sendOnce(chatRequest) {
-      return withRetry(
-        () => openrouter.chat.send({ chatRequest }),
-        { retries: CONFIG.LLM_MAX_RETRIES, baseDelayMs: 800, timeoutMs: CONFIG.LLM_TIMEOUT_MS }
-      );
-    }
+    const maxTokens = getEffectiveMaxTokens(current.id);
 
     let stream;
-    try {
-      stream = await sendOnce(rich);
-    } catch (error) {
-      const reason = extractProviderErrorMessage(error);
-      if (isLikelyParameterCompatibilityError(reason)) {
-        logger.warn('Retrying with reduced params', { model: current, reason: reason.slice(0, 200) });
-        stream = await sendOnce(base);
-      } else {
-        throw error;
+    if (current.provider === 'ollama') {
+      stream = await withRetry(
+        () => openLocalChatStream({
+          baseUrl: CONFIG.LOCAL_BASE_URL,
+          apiKey: CONFIG.LOCAL_API_KEY,
+          model: current.model,
+          messages: msgs,
+          maxTokens,
+          temperature: CONFIG.TEMPERATURE,
+          topP: CONFIG.TOP_P,
+          frequencyPenalty: CONFIG.FREQUENCY_PENALTY,
+          presencePenalty: CONFIG.PRESENCE_PENALTY,
+          timeoutMs: CONFIG.LLM_TIMEOUT_MS,
+        }),
+        { retries: CONFIG.LLM_MAX_RETRIES, baseDelayMs: 800, timeoutMs: CONFIG.LLM_TIMEOUT_MS }
+      );
+    } else {
+      const openrouter = await getOpenRouterClient();
+      const base = { model: current.model, messages: msgs, maxTokens, temperature: CONFIG.TEMPERATURE, stream: true };
+      const rich = { ...base, topP: CONFIG.TOP_P, frequencyPenalty: CONFIG.FREQUENCY_PENALTY, presencePenalty: CONFIG.PRESENCE_PENALTY };
+
+      async function sendOnce(chatRequest) {
+        return withRetry(
+          () => openrouter.chat.send({ chatRequest }),
+          { retries: CONFIG.LLM_MAX_RETRIES, baseDelayMs: 800, timeoutMs: CONFIG.LLM_TIMEOUT_MS }
+        );
+      }
+
+      try {
+        stream = await sendOnce(rich);
+      } catch (error) {
+        const reason = extractProviderErrorMessage(error);
+        if (isLikelyParameterCompatibilityError(reason)) {
+          logger.warn('Retrying with reduced params', { model: current.id, reason: reason.slice(0, 200) });
+          stream = await sendOnce(base);
+        } else {
+          throw error;
+        }
       }
     }
 
@@ -290,33 +373,39 @@ async function queryOpenRouter(messages, modelId, onChunk) {
     const sendFn = (msgs) => attempt(current, msgs);
     const { text, usage, finishReason, continuations } = await completeWithAutoContinue(sendFn, baseMessages);
     if (continuations > 0) {
-      logger.info('Auto-continued truncated output', { model: current, continuations, chars: text.length });
+      logger.info('Auto-continued truncated output', { model: current.id, continuations, chars: text.length });
     }
     if (finishReason === 'length') {
-      logger.warn('Output still truncated after auto-continue', { model: current, chars: text.length });
+      logger.warn('Output still truncated after auto-continue', { model: current.id, chars: text.length });
     }
     return { text, usage, finishReason };
   }
 
-  try {
-    const { text, usage } = await attemptComplete(model, messages);
-    return { text, model, usage };
-  } catch (error) {
-    const fallback = CONFIG.OPENROUTER_MODEL;
-    // Auth failures can't be fixed by switching models — fail fast instead of burning a fallback call.
-    if (model !== fallback && !isAuthError(error) && isModelUnavailableError(error)) {
-      logger.warn('Session model unavailable, falling back', { detail: describeProviderError(error), from: model, to: fallback });
-      try {
-        const fb = await attemptComplete(fallback, messages);
-        return { text: fb.text, model: fallback, usage: fb.usage };
-      } catch (fallbackError) {
-        logger.error('Fallback model failed', { detail: describeProviderError(fallbackError), model: fallback });
-        throw new Error(toUserFacingProviderError(fallbackError, fallback));
+  const candidates = [primary, ...getFallbackTargets(primary)];
+  let lastError;
+  let localFailure = null;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const current = candidates[i];
+    try {
+      const { text, usage } = await attemptComplete(current, messages);
+      if (i > 0) logger.warn('Using fallback model', { from: primary.id, to: current.id });
+      return { text, model: current.id, usage };
+    } catch (error) {
+      lastError = error;
+      if (current.provider === 'ollama' && isLocalConnectionError(error)) localFailure = error;
+      const next = candidates[i + 1];
+      if (next) {
+        logger.warn('AI model failed, trying fallback', {
+          detail: describeProviderError(error), from: current.id, to: next.id,
+        });
       }
     }
-    logger.error('Model request failed', { detail: describeProviderError(error), model });
-    throw new Error(toUserFacingProviderError(error, model));
   }
+
+  logger.error('Model request failed', { detail: describeProviderError(lastError), model });
+  if (localFailure) throw new Error(localUnavailableMessage(CONFIG.LOCAL_BASE_URL));
+  throw new Error(toUserFacingProviderError(lastError, model));
 }
 
 // ---------- Web search ----------
@@ -407,7 +496,7 @@ async function resolveReplyTarget(message, clientUser) {
 
 // ---------- Chat pipeline ----------
 async function runChat({ source, channel, userPrompt, replyMode }) {
-  if (!CONFIG.OPENROUTER_API_KEY) {
+  if (!hasAIProvider()) {
     await replyNotConfigured(replyMode);
     return;
   }
@@ -489,7 +578,8 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
   if (command === 'ping') {
     const ws = Math.round(client.ws.ping);
     const pingText = Number.isFinite(ws) ? `**${ws}ms**` : 'measuring…';
-    await replyEmbedOrText(replyMode, infoEmbed('🏓 Pong', `Online · gateway ping: ${pingText}`));
+    const local = await localProviderStatusLine();
+    await replyEmbedOrText(replyMode, infoEmbed('🏓 Pong', `Online · gateway ping: ${pingText}\n${local}`));
     return;
   }
   if (command === 'clear') {
@@ -501,8 +591,9 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
   if (command === 'stats') {
     const model = await getSessionModel(source);
     const pers = await getSessionPersonality(source);
+    const local = await localProviderStatusLine();
     await replyEmbedOrText(replyMode, infoEmbed('📊 Your Settings',
-      `Model: \`${model}\`\nPersonality: **${pers.name}** (\`${pers.key}\`)`));
+      `Model: \`${model}\`\nPersonality: **${pers.name}** (\`${pers.key}\`)\n${local}`));
     return;
   }
   if (command === 'group') {
@@ -625,7 +716,8 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
       }
       try {
         const p = await setSessionPersonality(source, arg);
-        await replyEmbedOrText(replyMode, infoEmbed('✅ Personality Switched', `Now using **${p.name}**`));
+        const modelNote = p.switchedModel ? `\nModel: **${p.switchedModel.name}**\n\`${p.switchedModel.id}\`` : '';
+        await replyEmbedOrText(replyMode, infoEmbed('✅ Personality Switched', `Now using **${p.name}**${modelNote}`));
       } catch (e) {
         if (replyMode.kind === 'message') await safeReplyToMessage(replyMode.message, `❌ ${e.message}`);
         else await safeEditReply(replyMode.interaction, `❌ ${e.message}`);
@@ -644,7 +736,7 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
       else await safeEditReply(replyMode.interaction, msg);
       return;
     }
-    if (!CONFIG.OPENROUTER_API_KEY) {
+    if (!hasAIProvider()) {
       await replyNotConfigured(replyMode);
       return;
     }
@@ -697,7 +789,7 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
       else await safeEditReply(replyMode.interaction, msg);
       return;
     }
-    if (!CONFIG.OPENROUTER_API_KEY) {
+    if (!hasAIProvider()) {
       await replyNotConfigured(replyMode);
       return;
     }
@@ -804,7 +896,11 @@ async function handleAutocomplete(interaction) {
   const focused = interaction.options.getFocused(true);
   if (interaction.commandName === 'model' && focused.name === 'model') {
     const q = String(focused.value || '').toLowerCase();
-    const matches = AVAILABLE_MODELS.filter(m => m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q)).slice(0, 25);
+    const matches = AVAILABLE_MODELS.filter(m =>
+      m.id.toLowerCase().includes(q)
+      || m.name.toLowerCase().includes(q)
+      || (m.model && m.model.toLowerCase().includes(q))
+    ).slice(0, 25);
     await interaction.respond(matches.map(m => ({ name: `${m.name} (${m.id})`.slice(0, 100), value: m.id })));
   } else if (interaction.commandName === 'personality' && focused.name === 'name') {
     const { HIDDEN_PERSONALITY_KEYS } = require('./bot-data');
@@ -838,7 +934,7 @@ async function handleButton(interaction) {
     await interaction.reply({ content: `Slow down — try again in ${(cd.retryAfterMs / 1000).toFixed(1)}s.`, flags: MessageFlags.Ephemeral }).catch(() => {});
     return;
   }
-  if (!CONFIG.OPENROUTER_API_KEY) {
+  if (!hasAIProvider()) {
     await interaction.reply({ content: NOT_CONFIGURED_MSG, flags: MessageFlags.Ephemeral }).catch(() => {});
     return;
   }
@@ -1029,7 +1125,10 @@ function appVersion() {
 async function boot() {
   logger.info(`Starting discord-openrouter-chatbot v${appVersion()}`, {
     node: process.version,
-    model: CONFIG.OPENROUTER_MODEL,
+    model: CONFIG.DEFAULT_MODEL,
+    localModel: CONFIG.LOCAL_MODEL || null,
+    localBaseUrl: CONFIG.LOCAL_MODEL ? CONFIG.LOCAL_BASE_URL : null,
+    openRouterFallback: CONFIG.OPENROUTER_API_KEY ? CONFIG.OPENROUTER_MODEL : null,
     logFormat: process.env.LOG_FORMAT || (process.env.NODE_ENV === 'production' ? 'json' : 'pretty'),
     logFile: process.env.LOG_FILE || null,
   });

@@ -44,11 +44,13 @@ test('personality list hides aliases, shows Girl once', () => {
   assert.equal(girlKeyCount, 1);
 });
 
-test('default model is pinned to verified non-reasoning free model', () => {
-  // Unset env-driven default check: config module default literal
+test('default AI model is local Ollama, not a remote model', () => {
   const fs = require('node:fs');
-  const src = fs.readFileSync(__dirname + '/../src/config.js', 'utf-8');
-  assert.ok(src.includes("'nvidia/nemotron-3-super-120b-a12b:free'"), 'default model should be verified Nemotron free');
+  const configSrc = fs.readFileSync(__dirname + '/../src/config.js', 'utf-8');
+  const { DEFAULT_LOCAL_MODEL, DEFAULT_PERSONALITIES } = require('../bot-data');
+  assert.equal(DEFAULT_LOCAL_MODEL, 'llama3.2:3b');
+  assert.ok(configSrc.includes("LOCAL_MODEL: str('LOCAL_MODEL', 'llama3.2:3b')"), 'config should default to local Ollama');
+  assert.equal(DEFAULT_PERSONALITIES.standard.model, 'ollama/llama3.2:3b');
 });
 
 test('retired model IDs migrate to live replacements', () => {

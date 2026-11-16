@@ -1,11 +1,12 @@
 {
   "name": "discord-openrouter-chatbot",
-  "version": "2.5.0",
-  "description": "Discord chatbot powered by OpenRouter-compatible models with slash-command UX",
+  "version": "2.6.0",
+  "description": "Discord chatbot powered by local Ollama models with optional OpenRouter fallback",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
     "dev": "node --watch bot.js",
+    "models:pull": "ollama pull llama3.2:3b && ollama pull qwen3:4b && ollama pull qwen2.5-coder:7b",
     "deploy-commands": "node deploy-commands.js",
     "test": "node --test tests/*.test.js",
     "test:bun": "bun test",

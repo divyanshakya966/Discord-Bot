@@ -28,6 +28,9 @@ const CONFIG = {
   OPENROUTER_API_KEY: str('OPENROUTER_API_KEY', ''),
   OPENROUTER_MODEL: str('OPENROUTER_MODEL', 'nvidia/nemotron-3-super-120b-a12b:free'),
   OPENROUTER_BASE_URL: str('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1'),
+  LOCAL_MODEL: str('LOCAL_MODEL', 'llama3.2:3b'),
+  LOCAL_BASE_URL: str('OLLAMA_BASE_URL', 'http://127.0.0.1:11434/v1'),
+  LOCAL_API_KEY: str('OLLAMA_API_KEY', 'ollama'),
   SYSTEM_PROMPT: str('SYSTEM_PROMPT', 'You are a helpful and concise Discord assistant. Keep answers friendly and practical.'),
   MAX_HISTORY: num('MAX_HISTORY', 8, 1, 50),
   MAX_TOKENS: num('MAX_TOKENS', 1000, 1, 8000),
@@ -45,10 +48,19 @@ const CONFIG = {
   BOT_OWNER_IDS: idList('BOT_OWNER_IDS'),
 };
 
+// Accept either `llama3.2:3b` or `ollama/llama3.2:3b` in LOCAL_MODEL.
+CONFIG.LOCAL_MODEL = String(CONFIG.LOCAL_MODEL || '').trim().replace(/^ollama\//, '');
+
+// Local Ollama is the default so the bot keeps working without remote credits.
+CONFIG.DEFAULT_MODEL = str('DEFAULT_MODEL', '')
+  || (CONFIG.LOCAL_MODEL ? `ollama/${CONFIG.LOCAL_MODEL}` : CONFIG.OPENROUTER_MODEL);
+
 function validateConfig(cfg = CONFIG) {
   const errors = [];
   if (!cfg.DISCORD_TOKEN) errors.push('DISCORD_TOKEN is required');
-  if (!cfg.OPENROUTER_API_KEY) errors.push('OPENROUTER_API_KEY is required (bot will run in degraded mode without AI)');
+  if (!cfg.LOCAL_MODEL && !cfg.OPENROUTER_API_KEY) {
+    errors.push('No AI provider configured: set LOCAL_MODEL (Ollama) or OPENROUTER_API_KEY (bot will run in degraded mode without AI)');
+  }
   if (cfg.DISCORD_TOKEN && cfg.DISCORD_TOKEN.length < 20) errors.push('DISCORD_TOKEN looks invalid (too short)');
   return errors;
 }

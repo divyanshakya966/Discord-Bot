@@ -1,5 +1,16 @@
 # Changelog - Premium Features Release
 
+## Version 2.6.0 - Local Ollama models + personality wiring
+
+- Local Ollama is now a first-class provider (`src/ai/localProvider.js`): OpenAI-compatible `/v1/chat/completions`, SSE streaming, retries/timeouts, and the same auto-continue/paged replies as remote models. Default model is `ollama/llama3.2:3b` — no OpenRouter credits required.
+- Added local model catalog: Llama 3.2 3B (general), Qwen3 4B (reasoning), Qwen3 1.7B (fast), Qwen2.5 Coder 7B + 7B Lite (code). `npm run models:pull` pulls the recommended set.
+- Personalities now carry a tuned model and switch to it automatically: Standard/Tutor → Llama 3.2 3B, Code Analyzer → Qwen2.5 Coder 7B, Researcher/Creative/Girl → Qwen3 4B. `/model set` still overrides.
+- Provider fallback works both ways: local → OpenRouter (when configured) and OpenRouter → local (when configured), with a clear `ollama serve` message when the local server is unreachable.
+- Config: `LOCAL_MODEL`, `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`, `DEFAULT_MODEL`; `OPENROUTER_API_KEY` is now optional. Old prefs using bare local names normalize to `ollama/<name>`.
+- `/ping` and `/stats` now report local Ollama health (online/offline + whether the configured model is listed), and `/model list` groups models into Local Ollama and Remote OpenRouter sections.
+- Local usage tokens now requested via `stream_options.include_usage`; added mocked two-way provider-fallback tests, local health/SSE tests, grouped-embed coverage, and synced `package-lock.json` to 2.6.0.
+- Secret hygiene: `.gitignore` and `.dockerignore` now block all `.env.*` variants (keeping `.env.example`), and `SECURITY.md` no longer publishes a personal email.
+
 ## Version 2.5.0 - Group discussion mode
 
 - `/group on|off|status|clear` (slash + prefix + mention): opt a channel into one shared history file (`group_<channel>.json`) instead of per-user memory. Chatter is recorded silently with author tags; mentions, replies, `/ask`, `/code`, `/research` and Retry/Continue answer from the shared context.

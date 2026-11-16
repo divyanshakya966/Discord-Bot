@@ -52,15 +52,18 @@ function buttonInteraction(uid, customId) {
   return { interaction, calls };
 }
 
-// Blank the API key without network: every LLM path must fail fast with the
-// setup reminder instead of attempting requests.
+// Blank every provider without network: LLM paths must fail fast with the
+// setup reminder instead of attempting local or remote requests.
 async function withBlankedKey(fn) {
-  const saved = CONFIG.OPENROUTER_API_KEY;
+  const savedKey = CONFIG.OPENROUTER_API_KEY;
+  const savedLocal = CONFIG.LOCAL_MODEL;
   CONFIG.OPENROUTER_API_KEY = '';
+  CONFIG.LOCAL_MODEL = '';
   try {
     await fn();
   } finally {
-    CONFIG.OPENROUTER_API_KEY = saved;
+    CONFIG.OPENROUTER_API_KEY = savedKey;
+    CONFIG.LOCAL_MODEL = savedLocal;
   }
 }
 
@@ -89,14 +92,16 @@ test('ping replies without throwing when gateway ping is NaN', async () => {
   await bot.handleCommand(src(), chan(), 'ping', '', mode(message));
   const r = firstReply(sent);
   assert.ok(r.embeds?.length === 1);
+  assert.match(r.embeds[0].toJSON().description, /Local AI:/);
 });
 
-test('stats shows current model and personality', async () => {
+test('stats shows current model, personality, and local AI health', async () => {
   const { message, sent } = fakeMessage();
   await bot.handleCommand(src('u-stats'), chan(), 'stats', '', mode(message));
   const desc = firstReply(sent).embeds[0].toJSON().description;
   assert.match(desc, /Model:/);
   assert.match(desc, /Personality:/);
+  assert.match(desc, /Local AI:/);
 });
 
 test('clear wipes history and confirms', async () => {

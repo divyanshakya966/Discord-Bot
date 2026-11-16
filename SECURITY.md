@@ -13,10 +13,7 @@
 
 **Please do NOT open a public GitHub issue for security vulnerabilities.**
 
-If you discover a security issue (e.g., a command bypass that allows unprivileged users to run admin commands, a token leak vector, or a way to crash the bot remotely), please report it privately:
-
-1. Email: **divyanshakya.dev@gmail.com**
-2. Or use [GitHub's private vulnerability reporting](../../security/advisories/new) if enabled on this repo.
+If you discover a security issue (e.g., a command bypass that allows unprivileged users to run admin commands, a token leak vector, or a way to crash the bot remotely), please report it privately using [GitHub's private vulnerability reporting](../../security/advisories/new). If that is unavailable, contact the maintainer through their GitHub profile instead of opening a public issue.
 
 Include in your report:
 

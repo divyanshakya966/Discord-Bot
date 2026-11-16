@@ -80,5 +80,11 @@ test('embeds build without throw', () => {
   assert.ok(errorEmbed('x').toJSON().title.length > 0);
   assert.ok(infoEmbed('t', 'b').toJSON().title === 't');
   assert.ok(modelListEmbed([{ id: 'a', name: 'A' }]).toJSON().description.includes('a'));
+  const grouped = modelListEmbed([
+    { id: 'ollama/x', name: 'Local X', provider: 'ollama' },
+    { id: 'remote/y', name: 'Remote Y', provider: 'openrouter' },
+  ]).toJSON();
+  assert.ok(grouped.fields.some(f => f.name.includes('Local') && f.value.includes('ollama/x')));
+  assert.ok(grouped.fields.some(f => f.name.includes('Remote') && f.value.includes('remote/y')));
   assert.equal(actionRowForReply().components.length, 3);
 });
