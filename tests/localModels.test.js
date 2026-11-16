@@ -11,8 +11,8 @@ const {
   resolveModelProvider,
   isLocalModelId,
 } = require('../bot-data');
-const { parseSseStream, normalizeBaseUrl, checkLocalHealth } = require('../src/ai/localProvider');
-const { fitMessagesToContext, getModelContextTokens, getOutputReserveTokens } = require('../bot');
+const { parseSseStream, normalizeBaseUrl, checkLocalHealth, openLocalChatStream } = require('../src/ai/localProvider');
+const { fitMessagesToContext, getGirlResponseTokens, getModelContextTokens, getOutputReserveTokens } = require('../bot');
 
 test('local Ollama models are exposed in the model list', () => {
   assert.ok(LOCAL_MODELS.length >= 3);
@@ -30,6 +30,19 @@ test('each personality is wired to a known local model', () => {
     assert.equal(target.provider, 'ollama', `${key} should use a local model`);
     assert.ok(getModelEntry(target.id), `${key} model ${personality.model} must be listed`);
   }
+});
+
+test('Girl personality variants always use the local Llama model', () => {
+  for (const key of ['girl', 'girl-text', 'casual']) {
+    assert.equal(DEFAULT_PERSONALITIES[key].model, 'ollama/llama3.2:3b');
+    assert.equal(PERSONALITY_MODELS[key], 'ollama/llama3.2:3b');
+  }
+});
+
+test('Girl response budgets stay short unless the prompt needs detail', () => {
+  assert.ok(getGirlResponseTokens('hey', () => 0) >= 120);
+  assert.ok(getGirlResponseTokens('hey', () => 0) <= 300);
+  assert.ok(getGirlResponseTokens('Explain how this works and compare the two approaches.', () => 0) > 300);
 });
 
 test('code analyzer defaults to the lite coder model', () => {
@@ -104,4 +117,30 @@ test('SSE stream parser tolerates chunk boundaries and [DONE]', async () => {
   assert.equal(chunks.length, 2);
   assert.equal(chunks[0].choices[0].delta.content, 'Hello');
   assert.equal(chunks[1].choices[0].delta.content, '!');
+});
+
+test('local chat can disable Qwen thinking mode', async (t) => {
+  let payload;
+  const server = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', chunk => { raw += chunk; });
+    req.on('end', () => {
+      payload = JSON.parse(raw);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ choices: [{ message: { content: 'fast answer' }, finish_reason: 'stop' }] }));
+    });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const stream = await openLocalChatStream({
+    baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
+    model: 'qwen3:4b',
+    messages: [{ role: 'user', content: 'hello' }],
+    think: false,
+    reasoningEffort: 'none',
+  });
+  for await (const chunk of stream) assert.equal(chunk.choices[0].message.content, 'fast answer');
+  assert.equal(payload.think, false);
+  assert.equal(payload.reasoning_effort, 'none');
 });

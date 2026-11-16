@@ -59,7 +59,10 @@ async function collectStreamText(stream, onChunk) {
   let finishReason = null;
   for await (const chunk of stream) {
     const choice = chunk.choices?.[0];
-    const content = choice?.delta?.content ?? choice?.message?.content ?? choice?.text;
+    const rawContent = choice?.delta?.content ?? choice?.message?.content ?? choice?.text;
+    const content = Array.isArray(rawContent)
+      ? rawContent.map(part => typeof part === 'string' ? part : part?.text || '').join('')
+      : rawContent;
     if (content) {
       full += content;
       if (onChunk) await onChunk(content);
@@ -68,7 +71,7 @@ async function collectStreamText(stream, onChunk) {
     if (fr) finishReason = fr;
     if (chunk.usage) usage = chunk.usage;
   }
-  return { text: full.trim() || 'No response returned by model.', usage, finishReason };
+  return { text: full.trim(), usage, finishReason };
 }
 
 const { isCompleteResponse } = require('./tokens');

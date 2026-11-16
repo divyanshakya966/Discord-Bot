@@ -92,6 +92,8 @@ async function openLocalChatStream({
   topP,
   frequencyPenalty,
   presencePenalty,
+  think,
+  reasoningEffort,
   timeoutMs,
 } = {}) {
   if (!model) throw new Error('No local model was specified.');
@@ -107,6 +109,8 @@ async function openLocalChatStream({
   if (Number.isFinite(topP)) payload.top_p = topP;
   if (Number.isFinite(frequencyPenalty)) payload.frequency_penalty = frequencyPenalty;
   if (Number.isFinite(presencePenalty)) payload.presence_penalty = presencePenalty;
+  if (typeof think === 'boolean') payload.think = think;
+  if (reasoningEffort) payload.reasoning_effort = reasoningEffort;
 
   const headers = { 'Content-Type': 'application/json' };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;

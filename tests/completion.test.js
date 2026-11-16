@@ -84,6 +84,12 @@ test('collectStreamText forwards chunks to onChunk', async () => {
   assert.deepEqual(seen, ['a', 'b']);
 });
 
+test('collectStreamText does not turn an empty stream into a fake answer', async () => {
+  const r = await collectStreamText(streamOf([{ choices: [{ finish_reason: 'length' }] }]));
+  assert.equal(r.text, '');
+  assert.equal(r.finishReason, 'length');
+});
+
 test('complete response needs no continuation', async () => {
   let calls = 0;
   const sendFn = async (msgs) => {

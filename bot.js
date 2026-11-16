@@ -20,7 +20,7 @@ const {
 const { withRetry } = require('./src/ai/retry');
 const { truncateHistory, trimToCompleteChars, estimateTokens, contextHistoryBudget } = require('./src/ai/tokens');
 const { CooldownManager } = require('./src/discord/cooldown');
-const { startTypingLoop } = require('./src/discord/typing');
+const { startTypingLoop, waitForHumanTyping } = require('./src/discord/typing');
 const { parseMentionCommand, parsePrefixCommand } = require('./src/discord/routing');
 const { getMissingPermissions, missingToUserText } = require('./src/discord/permissions');
 const { collectAttachmentContext } = require('./src/discord/attachments');
@@ -68,6 +68,15 @@ function isValidCustomModelId(id) {
   return typeof id === 'string' && /^[a-zA-Z0-9\-_./:]+$/.test(id) && id.length >= 3 && id.length <= 120;
 }
 
+function getGirlResponseTokens(userPrompt, random = Math.random) {
+  const text = String(userPrompt || '').trim();
+  const complex = text.length > 180
+    || /\b(explain|why|how|steps?|compare|difference|详细|解释|почему|как)\b/i.test(text)
+    || /```|\n[-*]\s|\n\d+[.)]\s/.test(text);
+  if (complex) return 360 + Math.floor(random() * 241);
+  return 120 + Math.floor(random() * 181);
+}
+
 async function loadPersonalities() {
   const custom = await customPersonalityStore.load();
   return { ...DEFAULT_PERSONALITIES, ...(custom || {}) };
@@ -76,6 +85,12 @@ async function loadPersonalities() {
 async function getSessionModel(source) {
   const key = getModelKey(source);
   let stored = await modelPrefs.get(key);
+  const personality = await getSessionPersonality(source);
+  if (personality.key === 'girl' && stored && /^ollama\//i.test(String(stored))
+    && stored !== 'ollama/llama3.2:3b') {
+    stored = 'ollama/llama3.2:3b';
+    await modelPrefs.set(key, stored);
+  }
   if (stored && RETIRED_MODEL_IDS[stored]) {
     stored = RETIRED_MODEL_IDS[stored];
     await modelPrefs.set(key, stored);
@@ -124,9 +139,10 @@ async function setSessionPersonality(source, name) {
   // Each personality ships with a local model tuned for it. Selecting a
   // personality also selects that model; /model set can still override it.
   const personality = personalities[key];
+  const selectedModel = key === 'girl' ? 'ollama/llama3.2:3b' : personality.model;
   let switchedModel = null;
-  if (personality.model) {
-    const target = resolveModelProvider(personality.model, CONFIG.LOCAL_MODEL);
+  if (selectedModel) {
+    const target = resolveModelProvider(selectedModel, CONFIG.LOCAL_MODEL);
     const known = target && getModelEntry(target.id);
     if (known) {
       await modelPrefs.set(getModelKey(source), known.id);
@@ -230,17 +246,26 @@ async function replyNotConfigured(replyMode) {
 
 // ---------- Paged AI replies ----------
 // One paged message per answer (Prev/Next buttons, no channel flood); the payload builder also sanitizes markdown.
-async function sendPagedAIReply(replyMode, rawText) {
-  const payload = buildInitialPagedPayload(String(rawText ?? ''), actionRowForReply(), { maxChars: AUTO_CONTINUE_CHAR_BUDGET });
+async function getReplyActionRow(source) {
+  const personality = await getSessionPersonality(source);
+  return personality.key === 'girl' ? null : actionRowForReply();
+}
+
+async function sendPagedAIReply(replyMode, rawText, existingMessage = null, actionRow = actionRowForReply()) {
+  const payload = buildInitialPagedPayload(String(rawText ?? ''), actionRow, { maxChars: AUTO_CONTINUE_CHAR_BUDGET });
   if (replyMode.kind === 'message') {
+    if (existingMessage) {
+      await existingMessage.edit({ content: payload.content, allowedMentions: NO_PING, components: payload.components });
+      return existingMessage;
+    }
     return replyMode.message.reply({ content: payload.content, allowedMentions: NO_PING, components: payload.components });
   }
   await replyMode.interaction.editReply({ content: payload.content, allowedMentions: NO_PING, components: payload.components });
   return null;
 }
 
-async function sendPagedFollowUp(interaction, rawText) {
-  const payload = buildInitialPagedPayload(String(rawText ?? ''), actionRowForReply(), { maxChars: AUTO_CONTINUE_CHAR_BUDGET });
+async function sendPagedFollowUp(interaction, rawText, actionRow = actionRowForReply()) {
+  const payload = buildInitialPagedPayload(String(rawText ?? ''), actionRow, { maxChars: AUTO_CONTINUE_CHAR_BUDGET });
   await interaction.followUp({ content: payload.content, allowedMentions: NO_PING, components: payload.components });
 }
 
@@ -341,6 +366,13 @@ function getFallbackTargets(primary) {
   };
 
   if (primary.provider === 'ollama') {
+    // A reasoning model can return an empty content stream when the installed
+    // Ollama version ignores the OpenAI-compatible think=false option.
+    // Prefer the configured general model before leaving the local provider.
+    if (/^qwen3(?::|$)/i.test(primary.model)
+      && primary.id !== `ollama/${CONFIG.LOCAL_MODEL}`) {
+      add(`ollama/${CONFIG.LOCAL_MODEL}`);
+    }
     if (CONFIG.OPENROUTER_API_KEY) add(CONFIG.OPENROUTER_MODEL);
   } else {
     if (CONFIG.LOCAL_MODEL) add(`ollama/${CONFIG.LOCAL_MODEL}`);
@@ -349,17 +381,18 @@ function getFallbackTargets(primary) {
   return targets;
 }
 
-async function queryOpenRouter(messages, modelId, onChunk) {
+async function queryOpenRouter(messages, modelId, onChunk, options = {}) {
   const primary = resolvePrimaryModel(modelId);
   const model = primary.id;
 
   async function attempt(current, msgs = messages) {
-    const maxTokens = getEffectiveMaxTokens(current.id);
+    const maxTokens = Number.isFinite(options.maxTokens)
+      ? Math.min(getEffectiveMaxTokens(current.id), Math.max(1, options.maxTokens))
+      : getEffectiveMaxTokens(current.id);
 
-    let stream;
     if (current.provider === 'ollama') {
-      stream = await withRetry(
-        () => openLocalChatStream({
+      return withRetry(async () => {
+        const stream = await openLocalChatStream({
           baseUrl: CONFIG.LOCAL_BASE_URL,
           apiKey: CONFIG.LOCAL_API_KEY,
           model: current.model,
@@ -369,37 +402,40 @@ async function queryOpenRouter(messages, modelId, onChunk) {
           topP: CONFIG.TOP_P,
           frequencyPenalty: CONFIG.FREQUENCY_PENALTY,
           presencePenalty: CONFIG.PRESENCE_PENALTY,
+          // Qwen3 spends its output budget on hidden reasoning unless
+          // explicitly disabled; that is too slow and often leaves no reply.
+          think: /^qwen3(?::|$)/i.test(current.model) ? false : undefined,
+          reasoningEffort: /^qwen3(?::|$)/i.test(current.model) ? 'none' : undefined,
           timeoutMs: CONFIG.LLM_TIMEOUT_MS,
-        }),
-        { retries: CONFIG.LLM_MAX_RETRIES, baseDelayMs: 800, timeoutMs: CONFIG.LLM_TIMEOUT_MS }
-      );
+        }).then(stream => collectStreamText(stream, onChunk));
+        const result = await stream;
+        if (!result.text) throw new Error(`Local model "${current.model}" returned no answer.`);
+        return { ...result, maxTokens };
+      }, { retries: CONFIG.LLM_MAX_RETRIES, baseDelayMs: 800, timeoutMs: CONFIG.LLM_TIMEOUT_MS });
     } else {
       const openrouter = await getOpenRouterClient();
       const base = { model: current.model, messages: msgs, maxTokens, temperature: CONFIG.TEMPERATURE, stream: true };
       const rich = { ...base, topP: CONFIG.TOP_P, frequencyPenalty: CONFIG.FREQUENCY_PENALTY, presencePenalty: CONFIG.PRESENCE_PENALTY };
 
       async function sendOnce(chatRequest) {
-        return withRetry(
-          () => openrouter.chat.send({ chatRequest }),
-          { retries: CONFIG.LLM_MAX_RETRIES, baseDelayMs: 800, timeoutMs: CONFIG.LLM_TIMEOUT_MS }
-        );
+        return openrouter.chat.send({ chatRequest });
       }
 
-      try {
-        stream = await sendOnce(rich);
-      } catch (error) {
-        const reason = extractProviderErrorMessage(error);
-        if (isLikelyParameterCompatibilityError(reason)) {
+      return withRetry(async () => {
+        let stream;
+        try {
+          stream = await sendOnce(rich);
+        } catch (error) {
+          const reason = extractProviderErrorMessage(error);
+          if (!isLikelyParameterCompatibilityError(reason)) throw error;
           logger.warn('Retrying with reduced params', { model: current.id, reason: reason.slice(0, 200) });
           stream = await sendOnce(base);
-        } else {
-          throw error;
         }
-      }
+        const result = await collectStreamText(stream, onChunk);
+        if (!result.text) throw new Error(`Model "${current.model}" returned no answer.`);
+        return { ...result, maxTokens };
+      }, { retries: CONFIG.LLM_MAX_RETRIES, baseDelayMs: 800, timeoutMs: CONFIG.LLM_TIMEOUT_MS });
     }
-
-    const collected = await collectStreamText(stream, onChunk);
-    return { ...collected, maxTokens };
   }
 
   // Stitch continuations when the provider hits the output token limit.
@@ -499,6 +535,12 @@ async function searchWeb(query) {
 
 // ---------- Message building ----------
 function buildMessages({ systemPrompt, history, userPrompt, modelId }) {
+  const usableHistory = (Array.isArray(history) ? history : []).filter(message => {
+    const content = String(message?.content || '').trim();
+    return content
+      && content !== 'No response returned by model.'
+      && !content.includes(CONTINUE_PROMPT);
+  });
   const budget = contextHistoryBudget({
     contextTokens: getModelContextTokens(modelId),
     systemTokens: estimateTokens(systemPrompt),
@@ -507,14 +549,28 @@ function buildMessages({ systemPrompt, history, userPrompt, modelId }) {
     safetyTokens: CONTEXT_SAFETY_TOKENS,
     maxHistoryTokens: CONFIG.MAX_HISTORY_TOKENS,
   });
-  const recent = truncateHistory(history, CONFIG.MAX_HISTORY, budget);
+  const recent = truncateHistory(usableHistory, CONFIG.MAX_HISTORY, budget);
   return [{ role: 'system', content: systemPrompt }, ...recent, { role: 'user', content: userPrompt }];
 }
 
 async function buildModelMessages(source, history, userPrompt, modelId) {
   const personality = await getSessionPersonality(source);
+  const historyKey = await resolveHistoryKey(source);
+  const sharedContext = historyKey.startsWith('group:')
+    ? '\n\nShared-channel context: answer the latest user message first. Use older messages only when they clearly provide context. Do not imitate or continue an older assistant reply, and do not describe the conversation as stuck or confused unless the user asks.'
+    : '';
+  const girlStyle = personality.key === 'girl'
+    ? [
+      'Keep this reply natural and compact.',
+      'Use a warm, casual texting rhythm and a small reaction if it fits.',
+      'Be concise here; answer directly without a generic follow-up question.',
+      'Use a little playful personality, but do not overdo pet names or emojis.',
+    ][Math.floor(Math.random() * 4)]
+    : '';
   return buildMessages({
-    systemPrompt: buildSystemPrompt(personality.prompt),
+    systemPrompt: buildSystemPrompt(personality.prompt)
+      + sharedContext
+      + (girlStyle ? `\n\nGirl mode for this turn: ${girlStyle}` : ''),
     history,
     userPrompt,
     modelId,
@@ -581,6 +637,7 @@ async function runChat({ source, channel, userPrompt, replyMode }) {
   const historyPrompt = formatHistoryEntry(source, userPrompt, historyKey);
   const history = await historyStore.load(historyKey);
   const sessionModel = await getSessionModel(source);
+  const sessionPersonality = await getSessionPersonality(source);
   const modelMessages = await buildModelMessages(source, history, historyPrompt, sessionModel);
 
   const stopTyping = startTypingLoop(channel);
@@ -589,28 +646,40 @@ async function runChat({ source, channel, userPrompt, replyMode }) {
     let full = '';
     let lastEdit = 0;
     const isInteraction = replyMode.kind === 'interaction';
-    const onChunk = isInteraction ? async () => {
+    const onChunk = () => {
       const now = Date.now();
-      if (now - lastEdit < 3000) return;
+      if (now - lastEdit < 1000) return;
       lastEdit = now;
-      const preview = (full + '…').slice(-1900);
-      try { await replyMode.interaction.editReply({ content: preview.slice(0, 1900), allowedMentions: NO_PING }); } catch {}
-    } : undefined;
+      const preview = `${full.slice(0, 1899)}…`;
+      if (isInteraction) {
+        void replyMode.interaction.editReply({ content: preview, allowedMentions: NO_PING }).catch(() => {});
+      }
+    };
 
-    const wrappedOnChunk = onChunk ? async (c) => { full += c; await onChunk(); } : undefined;
+    const wrappedOnChunk = isInteraction
+      ? async (c) => { full += c; onChunk(); }
+      : undefined;
     const log = logger.child({ session: sessionKey, command: 'chat' });
-    const { text: assistantReply, model: usedModel, usage } = await queryOpenRouter(modelMessages, sessionModel, wrappedOnChunk);
+    const { text: assistantReply, model: usedModel, usage } = await queryOpenRouter(
+      modelMessages,
+      sessionModel,
+      wrappedOnChunk,
+      sessionPersonality.key === 'girl' ? { maxTokens: getGirlResponseTokens(userPrompt) } : undefined
+    );
+    await waitForHumanTyping(assistantReply, t0);
     const ms = Date.now() - t0;
     trackRequest(ms, false);
     log.info('AI reply', { model: usedModel, ms, tokens: normalizeUsage(usage) });
     await historyStore.append(historyKey, historyPrompt, assistantReply);
 
-    return sendPagedAIReply(replyMode, assistantReply);
+    return sendPagedAIReply(replyMode, assistantReply, null, await getReplyActionRow(source));
   } catch (error) {
     trackRequest(Date.now() - t0, true);
     logger.error('Chat pipeline failed', { error: error?.message, sessionKey });
     const safe = (error?.message || 'Something went wrong. Please try again.').slice(0, 1500);
-    if (replyMode.kind === 'message') await safeReplyToMessage(replyMode.message, `AI provider error: ${safe}`).catch(() => {});
+    if (replyMode.kind === 'message') {
+      await safeReplyToMessage(replyMode.message, `AI provider error: ${safe}`).catch(() => {});
+    }
     else await safeEditReply(replyMode.interaction, `AI provider error: ${safe}`).catch(() => {});
   } finally {
     stopTyping();
@@ -701,7 +770,7 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
     const fmt = (prompt || 'json').trim().toLowerCase();
     if (fmt === 'md') {
       const md = trimToCompleteChars(history.map(m => `**${m.role}**: ${m.content}`).join('\n\n'), 18000) || 'No history.';
-      await sendPagedAIReply(replyMode, md);
+      await sendPagedAIReply(replyMode, md, null, await getReplyActionRow(source));
       return;
     }
     const buf = Buffer.from(JSON.stringify(history, null, 2), 'utf-8');
@@ -826,7 +895,7 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
       const { text: analysis } = await queryOpenRouter(messages, sessionModel);
       trackRequest(Date.now() - t0, false);
       await historyStore.append(historyKey, formatHistoryEntry(source, `Code Analysis: ${prompt.slice(0, 120)}`, historyKey), analysis);
-      await sendPagedAIReply(replyMode, analysis);
+      await sendPagedAIReply(replyMode, analysis, null, await getReplyActionRow(source));
     } catch (e) {
       trackRequest(Date.now() - t0, true);
       const safe = (e?.message || 'Failed.').slice(0, 1500);
@@ -876,7 +945,7 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
       const { text: research } = await queryOpenRouter(messages, sessionModel);
       trackRequest(Date.now() - t0, false);
       await historyStore.append(historyKey, formatHistoryEntry(source, `Research: ${prompt}`, historyKey), research);
-      await sendPagedAIReply(replyMode, research);
+      await sendPagedAIReply(replyMode, research, null, await getReplyActionRow(source));
     } catch (e) {
       trackRequest(Date.now() - t0, true);
       const safe = (e?.message || 'Failed.').slice(0, 1500);
@@ -1003,11 +1072,12 @@ async function handleButton(interaction) {
   const history = await historyStore.load(historyKey);
   const sessionModel = await getSessionModel(source);
   const modelMessages = await buildModelMessages(source, history, prompt, sessionModel);
+  const actionRow = await getReplyActionRow(source);
   const stopTyping = startTypingLoop(channel);
   try {
     const { text: reply } = await queryOpenRouter(modelMessages, sessionModel);
     await historyStore.append(historyKey, formatHistoryEntry(source, prompt, historyKey), reply);
-    await sendPagedFollowUp(interaction, reply);
+    await sendPagedFollowUp(interaction, reply, actionRow);
   } catch (e) {
     await interaction.followUp({ embeds: [errorEmbed((e?.message || 'Failed').slice(0, 500))], flags: MessageFlags.Ephemeral }).catch(() => {});
   } finally {
@@ -1217,4 +1287,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { client, handleCommand, handleButton, handleSlashCommand, handleAutocomplete, runChat, getSessionModel, getSessionPersonality, queryOpenRouter, sendPagedAIReply, sendPagedFollowUp, getEffectiveMaxTokens, getModelContextTokens, getOutputReserveTokens, fitMessagesToContext, lastPromptBySession, pruneOldHistories, resolveReplyTarget, isGroupChannel, setGroupChannel, getGroupHistoryKey, resolveHistoryKey, resolveAuthorTag, formatHistoryEntry, isBotOwner, CONTINUE_PROMPT, MAX_AUTO_CONTINUATIONS, AUTO_CONTINUE_CHAR_BUDGET };
+module.exports = { client, handleCommand, handleButton, handleSlashCommand, handleAutocomplete, runChat, getSessionModel, getSessionPersonality, queryOpenRouter, sendPagedAIReply, sendPagedFollowUp, getEffectiveMaxTokens, getGirlResponseTokens, getModelContextTokens, getOutputReserveTokens, fitMessagesToContext, lastPromptBySession, pruneOldHistories, resolveReplyTarget, isGroupChannel, setGroupChannel, getGroupHistoryKey, resolveHistoryKey, resolveAuthorTag, formatHistoryEntry, isBotOwner, CONTINUE_PROMPT, MAX_AUTO_CONTINUATIONS, AUTO_CONTINUE_CHAR_BUDGET };

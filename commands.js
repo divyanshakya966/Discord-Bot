@@ -1,4 +1,10 @@
 const { SlashCommandBuilder } = require('discord.js');
+const { AVAILABLE_MODELS } = require('./bot-data');
+
+const modelChoices = AVAILABLE_MODELS.map(model => ({
+  name: `${model.name} (${model.id})`.slice(0, 100),
+  value: model.id,
+}));
 
 const slashCommands = [
   new SlashCommandBuilder().setName('help').setDescription('Show available commands and modes'),
@@ -27,7 +33,7 @@ const slashCommands = [
     .addSubcommand(s => s.setName('current').setDescription('Show the current AI model'))
     .addSubcommand(s =>
       s.setName('set').setDescription('Switch to a specific model')
-        .addStringOption(o => o.setName('model').setDescription('Model (local Ollama or OpenRouter ID)').setRequired(true).setAutocomplete(true))
+        .addStringOption(o => o.setName('model').setDescription('Model (local Ollama or OpenRouter ID)').setRequired(true).addChoices(...modelChoices))
     ),
   new SlashCommandBuilder()
     .setName('personality')

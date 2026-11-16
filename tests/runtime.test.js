@@ -18,6 +18,16 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'botruntime-'));
 const { MessageFlags } = require('discord.js');
 const bot = require('../bot.js');
 const { CONFIG } = require('../src/config');
+const { humanTypingDurationMs } = require('../src/discord/typing');
+
+test('human typing duration is bounded and scales with response length', () => {
+  assert.equal(humanTypingDurationMs('', () => 0), 0);
+  const short = humanTypingDurationMs('hello', () => 0);
+  const long = humanTypingDurationMs('x'.repeat(100), () => 0);
+  assert.ok(long > short);
+  assert.equal(humanTypingDurationMs('x'.repeat(10000), () => 0), 3200);
+  assert.equal(humanTypingDurationMs('hello', () => 0.99), 1503);
+});
 
 function src(uid = 'u1') {
   return { author: { id: uid, bot: false }, guildId: null };
@@ -338,7 +348,9 @@ test('slash definitions match what the handlers read', async () => {  const { sl
     assert.deepEqual(subs, ['current', 'list', 'set']);
   }
   const modelSet = byName.model.options.find(o => o.name === 'set');
-  assert.ok(modelSet.options.some(o => o.name === 'model' && o.autocomplete));
+  const modelOption = modelSet.options.find(o => o.name === 'model');
+  assert.ok(modelOption?.choices?.length > 0);
+  assert.ok(modelOption.choices.some(choice => choice.value === 'ollama/llama3.2:3b'));
   const persSet = byName.personality.options.find(o => o.name === 'set');
   assert.ok(persSet.options.some(o => o.name === 'name' && o.autocomplete));
 });

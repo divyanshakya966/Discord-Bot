@@ -41,7 +41,7 @@ A Discord chatbot built with Discord.js, a local Ollama provider, and an optiona
 
 **Local models (Ollama, default):** Llama 3.2 3B (general, default — ~2 GB), Qwen3 4B (reasoning/creative), Qwen3 1.7B (fast), Qwen2.5 Coder 7B Lite (code). The bot talks to `http://127.0.0.1:11434/v1`; start it with `ollama serve` and pull models with `ollama pull <name>`.
 **Remote models (optional fallback):** Nemotron 3 Super (Free), Auto Free Router, Gemma 4 26B (Free), Llama 3.1 70B, Mistral Large, GPT-4 Turbo, Claude 3.5 Sonnet (+ legacy MythoMax). These are used only if the local model fails or a user explicitly selects one.
-**Personalities are model-wired:** Standard/Tutor → Llama 3.2 3B · Code Analyzer → Qwen2.5 Coder 7B Lite · Researcher/Creative/Girl → Qwen3 4B. Selecting a personality also selects its tuned model; `/model set` can override it afterwards.
+**Personalities are model-wired:** Standard/Tutor/Girl → Llama 3.2 3B · Code Analyzer → Qwen2.5 Coder 7B Lite · Researcher/Creative → Qwen3 4B. Selecting a personality also selects its tuned local model; `/model set` can explicitly override it with a remote model afterwards. Girl mode favors short, varied, casual replies and only expands for questions that need detail.
 
 ### Specialized
 - `/code code:<code>` - Expert code review (max 6000 chars by default; text-file attachments also read)
@@ -141,7 +141,10 @@ npm run check     # syntax check
 
 - **Bot doesn't respond:** check it is in the server, Message Content intent is on, `DISCORD_TOKEN` is valid, and `npm run deploy-commands` was run after command changes.
 - **Slash commands missing:** global commands take minutes to propagate; for instant testing set `DISCORD_GUILD_ID` and redeploy.
+- **`/model set` says “Loading options failed”:** redeploy the changed command schema, then restart the bot. Use a guild deployment for immediate updates: `DISCORD_GUILD_ID=<your-server-id> npm run deploy-commands`. The model field now uses built-in choices, so it should not show an autocomplete loading state after the new schema is active.
 - **Local model errors:** ensure `ollama serve` is running and `ollama list` shows the model. If a personality model was never pulled, run `ollama pull qwen3:4b` / `ollama pull qwen2.5-coder-7b-lite:latest`, or pick another with `/model list`.
+- **Qwen3 is slow or returns almost no text:** the bot disables Qwen3 thinking mode for Discord replies so its output budget is used for the answer. Restart the bot after changing models or configuration.
+- **Typing indicator:** fast local responses use a short, randomized typing delay based on answer length; slower responses are not delayed further.
 - **Model errors / quota:** try `/model list` and pick another model; failed models fall back to the local default, then to OpenRouter if configured.
 - **Research has no web results:** add `SERPER_API_KEY`, otherwise the free DuckDuckGo fallback applies automatically.
 - **Service won't start (Fedora):** run `journalctl --user -u discord-bot -n 50` and verify `.env` values.
