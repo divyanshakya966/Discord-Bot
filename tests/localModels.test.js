@@ -12,6 +12,7 @@ const {
   isLocalModelId,
 } = require('../bot-data');
 const { parseSseStream, normalizeBaseUrl, checkLocalHealth } = require('../src/ai/localProvider');
+const { fitMessagesToContext, getModelContextTokens, getOutputReserveTokens } = require('../bot');
 
 test('local Ollama models are exposed in the model list', () => {
   assert.ok(LOCAL_MODELS.length >= 3);
@@ -31,10 +32,17 @@ test('each personality is wired to a known local model', () => {
   }
 });
 
+test('code analyzer defaults to the lite coder model', () => {
+  assert.equal(DEFAULT_PERSONALITIES['code-analyzer'].model, 'ollama/qwen2.5-coder-7b-lite:latest');
+  const target = getModelEntry('ollama/qwen2.5-coder-7b-lite:latest');
+  assert.equal(target.contextTokens, 8192);
+  assert.ok(!getModelEntry('ollama/qwen2.5-coder:7b'));
+});
+
 test('model resolver keeps local and OpenRouter IDs separate', () => {
-  const local = resolveModelProvider('ollama/qwen2.5-coder:7b');
+  const local = resolveModelProvider('ollama/qwen2.5-coder-7b-lite:latest');
   assert.equal(local.provider, 'ollama');
-  assert.equal(local.model, 'qwen2.5-coder:7b');
+  assert.equal(local.model, 'qwen2.5-coder-7b-lite:latest');
   assert.equal(isLocalModelId(local.id), true);
 
   const bareLocal = resolveModelProvider('qwen3:4b');
@@ -44,6 +52,22 @@ test('model resolver keeps local and OpenRouter IDs separate', () => {
   const remote = resolveModelProvider('openrouter/free');
   assert.equal(remote.provider, 'openrouter');
   assert.equal(isLocalModelId(remote.id), false);
+});
+
+test('fallback message fitting trims history for a smaller context window', () => {
+  const huge = 'x'.repeat(24000);
+  const messages = [
+    { role: 'system', content: 'system' },
+    { role: 'user', content: huge },
+    { role: 'assistant', content: huge },
+    { role: 'user', content: 'latest question' },
+  ];
+  const fitted = fitMessagesToContext(messages, 'ollama/llama3.2:3b');
+  assert.ok(fitted.length < messages.length);
+  assert.equal(fitted[0].role, 'system');
+  assert.equal(fitted.at(-1).content, 'latest question');
+  assert.equal(getModelContextTokens('ollama/qwen2.5-coder-7b-lite:latest'), 8192);
+  assert.equal(getOutputReserveTokens('ollama/qwen2.5-coder-7b-lite:latest'), 2000);
 });
 
 test('Ollama base URLs are normalized', () => {

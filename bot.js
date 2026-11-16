@@ -18,7 +18,7 @@ const {
   toUserFacingProviderError,
 } = require('./src/ai/errors');
 const { withRetry } = require('./src/ai/retry');
-const { truncateHistory, trimToCompleteChars } = require('./src/ai/tokens');
+const { truncateHistory, trimToCompleteChars, estimateTokens, contextHistoryBudget } = require('./src/ai/tokens');
 const { CooldownManager } = require('./src/discord/cooldown');
 const { startTypingLoop } = require('./src/discord/typing');
 const { parseMentionCommand, parsePrefixCommand } = require('./src/discord/routing');
@@ -49,7 +49,7 @@ const client = new Client({
 });
 
 // ---------- Stores ----------
-const historyStore = createHistoryStore({ dataDir: DATA_DIR, maxHistory: CONFIG.MAX_HISTORY, maxTokens: 6000 });
+const historyStore = createHistoryStore({ dataDir: DATA_DIR, maxHistory: CONFIG.MAX_HISTORY, maxTokens: CONFIG.MAX_HISTORY_TOKENS });
 const modelPrefs = createJsonStore('model_preferences.json', { dataDir: DATA_DIR });
 const personalityPrefs = createJsonStore('personality_preferences.json', { dataDir: DATA_DIR });
 const customPersonalityStore = createJsonStore('personalities.json', { dataDir: DATA_DIR });
@@ -291,6 +291,40 @@ function getEffectiveMaxTokens(modelId) {
   return CONFIG.MAX_TOKENS;
 }
 
+const DEFAULT_LOCAL_CONTEXT_TOKENS = 4096;
+const DEFAULT_REMOTE_CONTEXT_TOKENS = 32768;
+const CONTEXT_SAFETY_TOKENS = 512;
+
+function getModelContextTokens(modelId) {
+  const target = resolveModelProvider(modelId || CONFIG.DEFAULT_MODEL, CONFIG.LOCAL_MODEL);
+  const known = getModelEntry(target?.id) || getModelEntry(modelId);
+  if (Number.isFinite(known?.contextTokens) && known.contextTokens > 0) return known.contextTokens;
+  return target?.provider === 'ollama' ? DEFAULT_LOCAL_CONTEXT_TOKENS : DEFAULT_REMOTE_CONTEXT_TOKENS;
+}
+
+function getMaxContinuations(target) {
+  if (target?.provider !== 'ollama') return MAX_AUTO_CONTINUATIONS;
+  return getModelContextTokens(target.id) >= 8192 ? 1 : 0;
+}
+
+function getOutputReserveTokens(modelId) {
+  const target = resolveModelProvider(modelId || CONFIG.DEFAULT_MODEL, CONFIG.LOCAL_MODEL);
+  return getEffectiveMaxTokens(modelId) * (getMaxContinuations(target) + 1);
+}
+
+function fitMessagesToContext(messages, modelId) {
+  if (!Array.isArray(messages) || messages.length <= 2) return messages;
+  const limit = getModelContextTokens(modelId) - getOutputReserveTokens(modelId) - CONTEXT_SAFETY_TOKENS;
+  let total = messages.reduce((n, m) => n + estimateTokens(m?.content) + 4, 0);
+  if (total <= limit) return messages;
+  const fitted = [...messages];
+  while (fitted.length > 2 && total > limit) {
+    const removed = fitted.splice(1, 1)[0];
+    total -= estimateTokens(removed?.content) + 4;
+  }
+  return fitted;
+}
+
 function resolvePrimaryModel(modelId) {
   return resolveModelProvider(modelId || CONFIG.DEFAULT_MODEL, CONFIG.LOCAL_MODEL)
     || resolveModelProvider(CONFIG.OPENROUTER_MODEL, CONFIG.LOCAL_MODEL);
@@ -371,7 +405,10 @@ async function queryOpenRouter(messages, modelId, onChunk) {
   // Stitch continuations when the provider hits the output token limit.
   async function attemptComplete(current, baseMessages) {
     const sendFn = (msgs) => attempt(current, msgs);
-    const { text, usage, finishReason, continuations } = await completeWithAutoContinue(sendFn, baseMessages);
+    const fittedMessages = fitMessagesToContext(baseMessages, current.id);
+    const { text, usage, finishReason, continuations } = await completeWithAutoContinue(sendFn, fittedMessages, {
+      maxContinuations: getMaxContinuations(current),
+    });
     if (continuations > 0) {
       logger.info('Auto-continued truncated output', { model: current.id, continuations, chars: text.length });
     }
@@ -461,10 +498,27 @@ async function searchWeb(query) {
 }
 
 // ---------- Message building ----------
-async function buildModelMessages(source, history, userPrompt) {
+function buildMessages({ systemPrompt, history, userPrompt, modelId }) {
+  const budget = contextHistoryBudget({
+    contextTokens: getModelContextTokens(modelId),
+    systemTokens: estimateTokens(systemPrompt),
+    promptTokens: estimateTokens(userPrompt),
+    outputTokens: getOutputReserveTokens(modelId),
+    safetyTokens: CONTEXT_SAFETY_TOKENS,
+    maxHistoryTokens: CONFIG.MAX_HISTORY_TOKENS,
+  });
+  const recent = truncateHistory(history, CONFIG.MAX_HISTORY, budget);
+  return [{ role: 'system', content: systemPrompt }, ...recent, { role: 'user', content: userPrompt }];
+}
+
+async function buildModelMessages(source, history, userPrompt, modelId) {
   const personality = await getSessionPersonality(source);
-  const recent = truncateHistory(history, CONFIG.MAX_HISTORY, 6000);
-  return [{ role: 'system', content: buildSystemPrompt(personality.prompt) }, ...recent, { role: 'user', content: userPrompt }];
+  return buildMessages({
+    systemPrompt: buildSystemPrompt(personality.prompt),
+    history,
+    userPrompt,
+    modelId,
+  });
 }
 
 function shouldRespond(message) {
@@ -527,7 +581,7 @@ async function runChat({ source, channel, userPrompt, replyMode }) {
   const historyPrompt = formatHistoryEntry(source, userPrompt, historyKey);
   const history = await historyStore.load(historyKey);
   const sessionModel = await getSessionModel(source);
-  const modelMessages = await buildModelMessages(source, history, historyPrompt);
+  const modelMessages = await buildModelMessages(source, history, historyPrompt, sessionModel);
 
   const stopTyping = startTypingLoop(channel);
   const t0 = Date.now();
@@ -752,11 +806,12 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
     const historyKey = await resolveHistoryKey(source);
     const history = await historyStore.load(historyKey);
     const sessionModel = await getSessionModel(source);
-    const messages = [
-      { role: 'system', content: buildSystemPrompt(analyzer.prompt) },
-      ...truncateHistory(history, CONFIG.MAX_HISTORY, 6000),
-      { role: 'user', content: formatHistoryEntry(source, `Please analyze this code:\n\`\`\`\n${prompt}\n\`\`\``, historyKey) },
-    ];
+    const messages = buildMessages({
+      systemPrompt: buildSystemPrompt(analyzer.prompt),
+      history,
+      userPrompt: formatHistoryEntry(source, `Please analyze this code:\n\`\`\`\n${prompt}\n\`\`\``, historyKey),
+      modelId: sessionModel,
+    });
     const cd = checkCooldown(source, 'code');
     if (!cd.allowed) {
       const msg = `Slow down — try again in ${(cd.retryAfterMs / 1000).toFixed(1)}s.`;
@@ -812,11 +867,12 @@ async function handleCommand(source, channel, command, prompt, replyMode) {
     try {
       const web = await searchWeb(prompt);
       const context = web ? `\n\n**Recent Search Results:**\n${web}` : '\n\n(No live web results found — answering from model knowledge.)';
-      const messages = [
-        { role: 'system', content: buildSystemPrompt(researcher.prompt) },
-        ...truncateHistory(history, CONFIG.MAX_HISTORY, 6000),
-        { role: 'user', content: formatHistoryEntry(source, `Research this topic:\n\n${prompt}${context}`, historyKey) },
-      ];
+      const messages = buildMessages({
+        systemPrompt: buildSystemPrompt(researcher.prompt),
+        history,
+        userPrompt: formatHistoryEntry(source, `Research this topic:\n\n${prompt}${context}`, historyKey),
+        modelId: sessionModel,
+      });
       const { text: research } = await queryOpenRouter(messages, sessionModel);
       trackRequest(Date.now() - t0, false);
       await historyStore.append(historyKey, formatHistoryEntry(source, `Research: ${prompt}`, historyKey), research);
@@ -946,7 +1002,7 @@ async function handleButton(interaction) {
   const historyKey = await resolveHistoryKey(source);
   const history = await historyStore.load(historyKey);
   const sessionModel = await getSessionModel(source);
-  const modelMessages = await buildModelMessages(source, history, prompt);
+  const modelMessages = await buildModelMessages(source, history, prompt, sessionModel);
   const stopTyping = startTypingLoop(channel);
   try {
     const { text: reply } = await queryOpenRouter(modelMessages, sessionModel);
@@ -1161,4 +1217,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { client, handleCommand, handleButton, handleSlashCommand, handleAutocomplete, runChat, getSessionModel, getSessionPersonality, queryOpenRouter, sendPagedAIReply, sendPagedFollowUp, getEffectiveMaxTokens, lastPromptBySession, pruneOldHistories, resolveReplyTarget, isGroupChannel, setGroupChannel, getGroupHistoryKey, resolveHistoryKey, resolveAuthorTag, formatHistoryEntry, isBotOwner, CONTINUE_PROMPT, MAX_AUTO_CONTINUATIONS, AUTO_CONTINUE_CHAR_BUDGET };
+module.exports = { client, handleCommand, handleButton, handleSlashCommand, handleAutocomplete, runChat, getSessionModel, getSessionPersonality, queryOpenRouter, sendPagedAIReply, sendPagedFollowUp, getEffectiveMaxTokens, getModelContextTokens, getOutputReserveTokens, fitMessagesToContext, lastPromptBySession, pruneOldHistories, resolveReplyTarget, isGroupChannel, setGroupChannel, getGroupHistoryKey, resolveHistoryKey, resolveAuthorTag, formatHistoryEntry, isBotOwner, CONTINUE_PROMPT, MAX_AUTO_CONTINUATIONS, AUTO_CONTINUE_CHAR_BUDGET };

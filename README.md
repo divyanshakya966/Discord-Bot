@@ -39,9 +39,9 @@ A Discord chatbot built with Discord.js, a local Ollama provider, and an optiona
 
 **How it works:** in a group channel the bot silently records discussion and answers mentions/replies/`/ask` from the shared history (one `group_<channel>.json` file) — every turn, chatter and answers alike, is tagged by its author's server display name. Model, personality, cooldowns and Retry memory stay per-user; `/clear` and `/export` stay personal. Retry/Continue/Clear buttons always act on the clicker's own session — nobody can trigger them on another user's behalf.
 
-**Local models (Ollama, default):** Llama 3.2 3B (general, default — ~2 GB), Qwen3 4B (reasoning/creative), Qwen3 1.7B (fast), Qwen2.5 Coder 7B and 7B Lite (code). The bot talks to `http://127.0.0.1:11434/v1`; start it with `ollama serve` and pull models with `ollama pull <name>`.
+**Local models (Ollama, default):** Llama 3.2 3B (general, default — ~2 GB), Qwen3 4B (reasoning/creative), Qwen3 1.7B (fast), Qwen2.5 Coder 7B Lite (code). The bot talks to `http://127.0.0.1:11434/v1`; start it with `ollama serve` and pull models with `ollama pull <name>`.
 **Remote models (optional fallback):** Nemotron 3 Super (Free), Auto Free Router, Gemma 4 26B (Free), Llama 3.1 70B, Mistral Large, GPT-4 Turbo, Claude 3.5 Sonnet (+ legacy MythoMax). These are used only if the local model fails or a user explicitly selects one.
-**Personalities are model-wired:** Standard/Tutor → Llama 3.2 3B · Code Analyzer → Qwen2.5 Coder 7B · Researcher/Creative/Girl → Qwen3 4B. Selecting a personality also selects its tuned model; `/model set` can override it afterwards.
+**Personalities are model-wired:** Standard/Tutor → Llama 3.2 3B · Code Analyzer → Qwen2.5 Coder 7B Lite · Researcher/Creative/Girl → Qwen3 4B. Selecting a personality also selects its tuned model; `/model set` can override it afterwards.
 
 ### Specialized
 - `/code code:<code>` - Expert code review (max 6000 chars by default; text-file attachments also read)
@@ -60,7 +60,7 @@ You can also mention the bot, or reply directly to one of its messages to contin
 
 ```bash
 npm install
-npm run models:pull   # llama3.2:3b + qwen3:4b + qwen2.5-coder:7b
+npm run models:pull   # llama3.2:3b + qwen3:4b + qwen2.5-coder-7b-lite:latest
 cp .env.example .env   # (Windows: copy .env.example .env)
 # fill DISCORD_TOKEN and DISCORD_CLIENT_ID; local Ollama works out of the box
 npm run deploy-commands
@@ -107,7 +107,7 @@ Local AI: `LOCAL_MODEL` (`llama3.2:3b`), `OLLAMA_BASE_URL` (`http://127.0.0.1:11
 
 Optional remote fallback: `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` (e.g. `nvidia/nemotron-3-super-120b-a12b:free`), `OPENROUTER_BASE_URL`.
 
-Other: `SYSTEM_PROMPT` (overrides Standard personality), `MAX_HISTORY` (8), `MAX_TOKENS` (1000), `TEMPERATURE` (0.85), `TOP_P`, `FREQUENCY_PENALTY`, `PRESENCE_PENALTY`, `SERPER_API_KEY`.
+Other: `SYSTEM_PROMPT` (overrides Standard personality), `MAX_HISTORY` (8), `MAX_HISTORY_TOKENS` (6000), `MAX_TOKENS` (1000), `TEMPERATURE` (0.85), `TOP_P`, `FREQUENCY_PENALTY`, `PRESENCE_PENALTY`, `SERPER_API_KEY`.
 
 Safety tuning: `MAX_PROMPT_CHARS` (4000), `MAX_CODE_CHARS` (6000), `COOLDOWN_MS` (4000), `LLM_TIMEOUT_MS` (60000), `LLM_MAX_RETRIES` (2), `LOG_LEVEL` (info), `DATA_DIR` (./data).
 
@@ -128,19 +128,20 @@ npm run check     # syntax check
 ## Data Storage
 
 - `data/` (gitignored): per-user history `guild_<gid>_user_<uid>.json` / `dm_<uid>.json`, `model_preferences.json`, `personality_preferences.json`, `personalities.json` (custom only).
-- Writes are atomic (tmp + rename), per-session serialized, with in-memory cache. History trimmed by turns (MAX_HISTORY) and ~6000-token budget.
+- Writes are atomic (tmp + rename), per-session serialized, with in-memory cache. History is trimmed by turns (`MAX_HISTORY`) and by a model-aware token budget (`MAX_HISTORY_TOKENS`); prompts reserve room for the system prompt, reply, and local context window before sending.
 
 ## Notes
 
 - Settings are per-user. Changing model/personality no longer affects the whole server.
 - Provider errors shown to users are sanitized; details go to logs.
 - If both `LOCAL_MODEL` and `OPENROUTER_API_KEY` are empty the bot runs degraded (replies with setup reminder). With Ollama running locally, no OpenRouter key is needed.
+- On 4 GB VRAM, keep one Ollama model resident (`OLLAMA_MAX_LOADED_MODELS=1`) and use a short `OLLAMA_KEEP_ALIVE`; the default `2` can spill a second model onto the CPU.
 
 ## Troubleshooting
 
 - **Bot doesn't respond:** check it is in the server, Message Content intent is on, `DISCORD_TOKEN` is valid, and `npm run deploy-commands` was run after command changes.
 - **Slash commands missing:** global commands take minutes to propagate; for instant testing set `DISCORD_GUILD_ID` and redeploy.
-- **Local model errors:** ensure `ollama serve` is running and `ollama list` shows the model. If a personality model was never pulled, run `ollama pull qwen3:4b` / `ollama pull qwen2.5-coder:7b`, or pick another with `/model list`.
+- **Local model errors:** ensure `ollama serve` is running and `ollama list` shows the model. If a personality model was never pulled, run `ollama pull qwen3:4b` / `ollama pull qwen2.5-coder-7b-lite:latest`, or pick another with `/model list`.
 - **Model errors / quota:** try `/model list` and pick another model; failed models fall back to the local default, then to OpenRouter if configured.
 - **Research has no web results:** add `SERPER_API_KEY`, otherwise the free DuckDuckGo fallback applies automatically.
 - **Service won't start (Fedora):** run `journalctl --user -u discord-bot -n 50` and verify `.env` values.

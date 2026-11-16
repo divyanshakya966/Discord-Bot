@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node bot.js",
     "dev": "node --watch bot.js",
-    "models:pull": "ollama pull llama3.2:3b && ollama pull qwen3:4b && ollama pull qwen2.5-coder:7b",
+    "models:pull": "ollama pull llama3.2:3b && ollama pull qwen3:4b && ollama pull qwen2.5-coder-7b-lite:latest",
     "deploy-commands": "node deploy-commands.js",
     "test": "node --test tests/*.test.js",
     "test:bun": "bun test",

@@ -33,6 +33,7 @@ const CONFIG = {
   LOCAL_API_KEY: str('OLLAMA_API_KEY', 'ollama'),
   SYSTEM_PROMPT: str('SYSTEM_PROMPT', 'You are a helpful and concise Discord assistant. Keep answers friendly and practical.'),
   MAX_HISTORY: num('MAX_HISTORY', 8, 1, 50),
+  MAX_HISTORY_TOKENS: num('MAX_HISTORY_TOKENS', 6000, 500, 16000),
   MAX_TOKENS: num('MAX_TOKENS', 1000, 1, 8000),
   TEMPERATURE: num('TEMPERATURE', 0.85, 0, 2),
   TOP_P: num('TOP_P', 0.95, 0, 1),

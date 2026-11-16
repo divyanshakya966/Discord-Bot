@@ -11,7 +11,21 @@ function truncateHistory(history, maxTurns = 8, maxTokens = 6000) {
   const maxEntries = maxTurns * 2;
   let h = history.length > maxEntries ? history.slice(history.length - maxEntries) : [...history];
   while (h.length > 2 && historyTokens(h) > maxTokens) h.splice(0, 2);
+  while (h.length > 0 && historyTokens(h) > maxTokens) h.shift();
   return h;
+}
+
+function contextHistoryBudget({
+  contextTokens,
+  systemTokens = 0,
+  promptTokens = 0,
+  outputTokens = 0,
+  safetyTokens = 256,
+  maxHistoryTokens = 6000,
+} = {}) {
+  if (!Number.isFinite(contextTokens) || contextTokens <= 0) return 0;
+  const available = contextTokens - systemTokens - promptTokens - outputTokens - safetyTokens;
+  return Math.max(0, Math.min(maxHistoryTokens, Math.floor(available)));
 }
 
 // Output completeness: cuts (token cap, Discord cap) must land on sentence
@@ -59,4 +73,4 @@ function findCompleteCut(text, maxChars) {
   return s.slice(0, cut).trimEnd();
 }
 
-module.exports = { estimateTokens, historyTokens, truncateHistory, isCompleteResponse, findCompleteCut, trimToCompleteChars };
+module.exports = { estimateTokens, historyTokens, truncateHistory, contextHistoryBudget, isCompleteResponse, findCompleteCut, trimToCompleteChars };

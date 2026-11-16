@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { truncateHistory, estimateTokens } = require('../src/ai/tokens');
+const { truncateHistory, estimateTokens, contextHistoryBudget } = require('../src/ai/tokens');
 const { CooldownManager } = require('../src/discord/cooldown');
 const { withLock } = require('../src/store/mutex');
 
@@ -14,6 +14,31 @@ test('truncateHistory respects turns and budget', () => {
   for (let i = 0; i < 30; i++) h.push({ role: i % 2 ? 'assistant' : 'user', content: 'x'.repeat(200) });
   const t = truncateHistory(h, 8, 6000);
   assert.ok(t.length <= 16);
+});
+
+test('truncateHistory never keeps history above the token budget', () => {
+  const h = [
+    { role: 'user', content: 'x'.repeat(20000) },
+    { role: 'assistant', content: 'x'.repeat(20000) },
+  ];
+  const t = truncateHistory(h, 8, 1000);
+  assert.ok(t.length < h.length);
+  assert.ok(t.reduce((n, m) => n + estimateTokens(m.content) + 4, 0) <= 1000);
+  assert.equal(h[0].content.length, 20000);
+});
+
+test('context budget reserves prompt, output, and safety room', () => {
+  const budget = contextHistoryBudget({
+    contextTokens: 4096,
+    systemTokens: 500,
+    promptTokens: 1000,
+    outputTokens: 1000,
+    safetyTokens: 256,
+    maxHistoryTokens: 6000,
+  });
+  assert.equal(budget, 1340);
+  assert.equal(contextHistoryBudget({ contextTokens: 4096, systemTokens: 3000, promptTokens: 1000, outputTokens: 1000 }), 0);
+  assert.equal(contextHistoryBudget({ contextTokens: 8192, systemTokens: 500, promptTokens: 1000, outputTokens: 2400, maxHistoryTokens: 2000 }), 2000);
 });
 
 test('cooldown blocks rapid repeats', () => {

@@ -1,11 +1,10 @@
 // Local models are served by Ollama. The `ollama/` prefix is the bot-facing
 // model ID; `model` is the exact name Ollama expects.
 const LOCAL_MODELS = [
-  { id: 'ollama/llama3.2:3b', name: 'Llama 3.2 3B (Local, General)', provider: 'ollama', model: 'llama3.2:3b', maxTokens: 1000 },
-  { id: 'ollama/qwen3:4b', name: 'Qwen3 4B (Local, Reasoning)', provider: 'ollama', model: 'qwen3:4b', maxTokens: 1200 },
-  { id: 'ollama/qwen3:1.7b', name: 'Qwen3 1.7B (Local, Fast)', provider: 'ollama', model: 'qwen3:1.7b', maxTokens: 800 },
-  { id: 'ollama/qwen2.5-coder:7b', name: 'Qwen2.5 Coder 7B (Local, Code)', provider: 'ollama', model: 'qwen2.5-coder:7b', maxTokens: 1200 },
-  { id: 'ollama/qwen2.5-coder-7b-lite:latest', name: 'Qwen2.5 Coder 7B Lite (Local, Code)', provider: 'ollama', model: 'qwen2.5-coder-7b-lite:latest', maxTokens: 1200 },
+  { id: 'ollama/llama3.2:3b', name: 'Llama 3.2 3B (Local, General)', provider: 'ollama', model: 'llama3.2:3b', maxTokens: 1000, contextTokens: 4096 },
+  { id: 'ollama/qwen3:4b', name: 'Qwen3 4B (Local, Reasoning)', provider: 'ollama', model: 'qwen3:4b', maxTokens: 1200, contextTokens: 4096 },
+  { id: 'ollama/qwen3:1.7b', name: 'Qwen3 1.7B (Local, Fast)', provider: 'ollama', model: 'qwen3:1.7b', maxTokens: 800, contextTokens: 4096 },
+  { id: 'ollama/qwen2.5-coder-7b-lite:latest', name: 'Qwen2.5 Coder 7B Lite (Local, Code)', provider: 'ollama', model: 'qwen2.5-coder-7b-lite:latest', maxTokens: 1200, contextTokens: 8192 },
 ];
 
 const REMOTE_MODELS = [
@@ -26,6 +25,8 @@ const DEFAULT_LOCAL_MODEL = 'llama3.2:3b';
 // Retired IDs auto-migrated to a live replacement on read (old prefs keep working).
 const RETIRED_MODEL_IDS = {
   'google/gemma-3-27b-it:free': 'nvidia/nemotron-3-super-120b-a12b:free',
+  'ollama/qwen2.5-coder:7b': 'ollama/qwen2.5-coder-7b-lite:latest',
+  'qwen2.5-coder:7b': 'ollama/qwen2.5-coder-7b-lite:latest',
 };
 
 const GIRL_PROMPT =
@@ -41,7 +42,7 @@ const DEFAULT_PERSONALITIES = {
     name: 'Code Analyzer',
     prompt:
       'You are an expert code analyzer and programmer. Analyze code thoroughly, identify bugs, suggest optimizations, and explain complex logic in detail. Always provide code examples when helpful.',
-    model: 'ollama/qwen2.5-coder:7b',
+    model: 'ollama/qwen2.5-coder-7b-lite:latest',
   },
   researcher: {
     name: 'Research Assistant',

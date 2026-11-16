@@ -3,12 +3,13 @@
 ## Version 2.6.0 - Local Ollama models + personality wiring
 
 - Local Ollama is now a first-class provider (`src/ai/localProvider.js`): OpenAI-compatible `/v1/chat/completions`, SSE streaming, retries/timeouts, and the same auto-continue/paged replies as remote models. Default model is `ollama/llama3.2:3b` — no OpenRouter credits required.
-- Added local model catalog: Llama 3.2 3B (general), Qwen3 4B (reasoning), Qwen3 1.7B (fast), Qwen2.5 Coder 7B + 7B Lite (code). `npm run models:pull` pulls the recommended set.
-- Personalities now carry a tuned model and switch to it automatically: Standard/Tutor → Llama 3.2 3B, Code Analyzer → Qwen2.5 Coder 7B, Researcher/Creative/Girl → Qwen3 4B. `/model set` still overrides.
+- Added local model catalog: Llama 3.2 3B (general), Qwen3 4B (reasoning), Qwen3 1.7B (fast), Qwen2.5 Coder 7B Lite (code). `npm run models:pull` pulls the recommended set.
+- Personalities now carry a tuned model and switch to it automatically: Standard/Tutor → Llama 3.2 3B, Code Analyzer → Qwen2.5 Coder 7B Lite, Researcher/Creative/Girl → Qwen3 4B. `/model set` still overrides.
 - Provider fallback works both ways: local → OpenRouter (when configured) and OpenRouter → local (when configured), with a clear `ollama serve` message when the local server is unreachable.
-- Config: `LOCAL_MODEL`, `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`, `DEFAULT_MODEL`; `OPENROUTER_API_KEY` is now optional. Old prefs using bare local names normalize to `ollama/<name>`.
+- Config: `LOCAL_MODEL`, `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`, `DEFAULT_MODEL`, `MAX_HISTORY_TOKENS`; `OPENROUTER_API_KEY` is now optional. Old prefs using bare local names normalize to `ollama/<name>`, and retired `qwen2.5-coder:7b` prefs migrate to `qwen2.5-coder-7b-lite:latest`.
 - `/ping` and `/stats` now report local Ollama health (online/offline + whether the configured model is listed), and `/model list` groups models into Local Ollama and Remote OpenRouter sections.
 - Local usage tokens now requested via `stream_options.include_usage`; added mocked two-way provider-fallback tests, local health/SSE tests, grouped-embed coverage, and synced `package-lock.json` to 2.6.0.
+- Context-aware history trimming: each local model declares its Ollama context window (4k for Llama/Qwen3, 8k for Coder Lite); message building reserves room for the system prompt, reply, and safety margin, lowering auto-continue limits on smaller windows. `MAX_HISTORY_TOKENS` (6000) caps the history budget.
 - Secret hygiene: `.gitignore` and `.dockerignore` now block all `.env.*` variants (keeping `.env.example`), and `SECURITY.md` no longer publishes a personal email.
 
 ## Version 2.5.0 - Group discussion mode
